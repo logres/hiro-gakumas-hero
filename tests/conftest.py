@@ -150,6 +150,7 @@ def _source(path: Path) -> str:
 def pytest_configure(config):
     config.addinivalue_line("markers", "user_assets(*kinds): 需要自建素材（HIRO_USER_ASSETS）；kinds 见 hiro.vision.assets.USER_ASSETS")
     config.addinivalue_line("markers", "synthetic: 只用合成图（源码里的 .png 是自己画的），不按「读样例截图」跳过")
+    config.addinivalue_line("markers", "upstream_assets: 使用固定子模块随附的参考图；用例自行检查资源存在，不依赖私有 tests/fixtures")
     config.addinivalue_line("markers", "fixtures: 要读 tests/fixtures 的截图样例（经类 / 多层辅助函数间接读，自动判断看不出来时显式标）")
     config.addinivalue_line("markers", "master: 要主数据 game.db（经决策器 / 识别层间接查，自动判断看不出来时显式标）")
 
@@ -199,7 +200,8 @@ def pytest_collection_modifyitems(config, items):
             if MASTER_HINT.search(body):
                 item.add_marker(pytest.mark.skip(reason="需要主数据 game.db（KAA 公开数据，HIRO_KAA_GAME_DATA）"))
                 continue
-        if not HAVE_FIXTURES and not item.get_closest_marker("synthetic") and _needs_fixtures(item, src):
+        has_own_images = item.get_closest_marker("synthetic") or item.get_closest_marker("upstream_assets")
+        if not HAVE_FIXTURES and not has_own_images and _needs_fixtures(item, src):
             item.add_marker(pytest.mark.skip(reason="没有截图样例 tests/fixtures（游戏画面不随仓库发布）"))
 
 

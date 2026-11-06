@@ -61,10 +61,13 @@
 牌堆顺序、未公开的回合属性），回合内搜索后续打到考试结束，按配对差比较期望终局分；轮间买卖、饮料时机等资源决策用同一批种子配对模拟。
 社区攻略是先验，模拟显著更好（约 2 个标准误）才偏离。它们通过上面的插件接口接入，你也可以写自己的实现。
 
-## Windows 适配基础版（本 fork）
+## Windows 实验适配（本 fork）
 
 已将设备、OCR、窗口管理的 Mac 实现隔离到 `hiro.platforms.macos`，公共入口按需选择实现。
-现有决策规则与状态逻辑保持不变。**Windows/DMM 的实际设备与 OCR 后端尚未实现，本版是接口基础。**
+现有决策规则与状态逻辑保持不变。已提供 Windows 前台设备、离线日文 OCR 和基于 KAA 模板的 LIVE 识别原型，需显式配置启用。
+**DMM 实机点击和完整游玩尚未验收；未知横屏会停下，隐藏控件与部分 LIVE 页面尚未覆盖。**
+
+- [Windows 安装、数据准备与配置](docs/windows-setup.md)
 
 - [平台接口与 Windows 接入契约](docs/platform-backends.md)
 - [Codex CLI / API Key 配置](docs/llm-backends.md)：`HIRO_LLM=codex[:model]` 或 `HIRO_LLM=openai:<model>`。

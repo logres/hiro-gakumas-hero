@@ -95,7 +95,7 @@ def get_backend(kind: Kind):
     if not spec:
         if sys.platform != "darwin":
             raise PlatformUnavailableError(
-                f"No {kind} backend for {sys.platform}. Windows/DMM support is an interface only; "
+                f"No default {kind} backend for {sys.platform}. Windows/DMM providers require explicit opt-in; "
                 f"set {ENV[kind]}=package.module[:factory] or register an implementation."
             )
         spec = f"hiro.platforms.macos.{kind}"

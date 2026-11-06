@@ -111,6 +111,11 @@ class HiroController(ProduceController):
         if self._landscape.tick(img):
             return  # 横屏 LIVE 黑屏：刚做了全屏切换，下一轮再判
         if img is not None and img.shape[1] > img.shape[0]:
+            if not self._landscape.in_live(img):
+                # A desktop window can be landscape without showing LIVE.
+                # Do not suppress the watchdog indefinitely on that assumption.
+                self.strategy._stop("unknown_landscape", "横屏画面没有平台可确认的 LIVE 标记，需要人工确认")
+                return
             # 横屏 LIVE 演出中（第三十一局：夺冠后 LIVE 约 2 分 45 秒）：画面本来就认不出，不跑快速判页 / KAA 判页
             # （KAA 拿竖屏 rect 去裁 1280x720，每 2s 报一次「rect … exceeds image bounds」，共 76 条），
             # 记一次进展（空转看门狗以前在 LIVE 结束 2s 后按「181s 没进展」停机），等演出结束

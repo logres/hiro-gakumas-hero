@@ -2,7 +2,7 @@
 
 设备、OCR、窗口恢复的 macOS 实现集中在 `src/hiro/platforms/macos/`。
 Windows OCR 已提供 `hiro.platforms.windows.ocr`，使用已安装的 KAA/kotonebot 资源中的日文、英文模型。
-Windows 前台设备原型为 `hiro.platforms.windows.device`；窗口恢复 provider 尚未实现。
+Windows 前台设备原型为 `hiro.platforms.windows.device`；窗口 provider 为 `hiro.platforms.windows.window`。
 OCR 已完成模拟结果测试与本机合成图片识别；这不代表 DMM 截图、输入或完整游戏流程已经实机验收。
 决策、规则、提示词和状态记账保持原实现；本次额外增加的模型接入见 [LLM 配置](llm-backends.md)。
 
@@ -31,7 +31,7 @@ $env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
 $env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.device'
 # 默认精确匹配窗口标题 gakumas；也可选择一个已确认的 HWND。
 $env:HIRO_WINDOW_TITLE = 'gakumas'
-# HIRO_WINDOW_BACKEND 暂无 Windows 实现，完整 play 仍未就绪。
+$env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'
 ```
 
 程序内也可在连接设备之前调用 `hiro.platforms.register("ocr", provider)`，其优先级高于环境变量。
@@ -63,6 +63,11 @@ Windows 设备拒绝零个或多个匹配窗口，连接时固定 HWND 与进程
 截图按客户区实际大小更新缩放器；截图后发生尺寸变化则拒绝使用旧截图坐标点击。
 配置 `HIRO_WINDOW_HWND` 时优先使用该句柄（十进制或 `0x` 十六进制）。
 安装步骤见 [Windows 环境安装](windows-setup.md)。
+
+Windows window provider 只做窗口边界查询和 KAA LIVE 跳过按钮模板识别，不执行
+PlayCover 的全屏修复。仅确认有按钮标记的 16:9 LIVE 画面；隐藏控件、演出开始页、
+横屏弹窗尚未覆盖。控制器遇到无法确认的横屏会明确停下，不再仅凭宽高比无限等待。
+这是实验实现，仍需真实 DMM 画面扩充和验收。
 
 `tests/test_platform_backends.py` 在不安装 KAA / Apple 框架时验证公共导入、Windows 缺失实现报错、
 注入设备与窗口恢复、OCR 公共辅助函数、配置优先级和 Mac 默认选择。

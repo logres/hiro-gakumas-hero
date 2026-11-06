@@ -27,15 +27,23 @@ pwsh -NoProfile -File scripts/setup-windows.ps1 -Regen
 ```powershell
 $env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.device'
 $env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
+$env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'
 ```
 
 设备 provider 是显式前台实现：截图会尝试激活选中的窗口，输入会移动真实鼠标。设置环境变量本身不会启动游戏或发送输入；调用设备连接和控制入口时才会使用这些能力。不要据此推断后台挂机可用。
 
-OCR 使用已安装资源中的日文/英文模型，详细实测与限制见 [Windows 验证记录](windows-validation.md)。Windows 窗口恢复 provider 仍未提供；不要把 `HIRO_WINDOW_BACKEND` 指向不存在的模块，也不要照搬 macOS 的 PlayCover 横屏恢复逻辑。完整 play 流程尚未完成验收。
+OCR 使用已安装资源中的日文/英文模型，详细实测与限制见 [Windows 验证记录](windows-validation.md)。Windows 窗口 provider 用 KAA 模板确认带跳过按钮的 LIVE，不执行 Mac 全屏补救。尚不覆盖隐藏控件、演出开始页和横屏弹窗；未知横屏会停下等待人工处理。完整 play 流程尚未完成验收。
 
 ## 数据与验收
 
-公开游戏数据仍使用 [现有安装脚本](../scripts/setup.sh) 第 5 步的官方 KAA `GameDataUpdater` / `apply_pending` 配方，按需单独执行；已有数据可用 `HIRO_KAA_GAME_DATA` 指向。Windows 安装脚本不重复实现下载与应用逻辑。不要把 macOS 脚本打印的开局命令当作 Windows 已就绪证明。
+公开游戏数据使用官方 KAA `GameDataUpdater` / `apply_pending` 流程，在仓库根目录单独执行：
+
+```powershell
+.venv/Scripts/python.exe tools/update_game_data.py
+```
+
+已有数据可用 `HIRO_KAA_GAME_DATA` 指向。工具先下载到 staging，再通过 KAA 校验与应用；不会启动游戏。
+不要把数据准备成功或 macOS 脚本打印的开局命令当作 Windows 已就绪证明。
 
 运行测试：
 

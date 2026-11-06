@@ -35,6 +35,27 @@ def ocr(img, *, scale: float = 3.0, languages=('ja-JP', 'en-US')) -> list[tuple[
     return [(text, confidence) for text, confidence, _ in ocr_boxes(img, scale=scale, languages=languages)]
 
 
+def _reading_order(items):
+    """Horizontal UI text: rows top-to-bottom, fragments left-to-right.
+
+    Detection tops differ slightly between kanji and digits. Group by vertical
+    overlap with a fixed row anchor instead of sorting every fragment by y.
+    Keep boxes and confidence unchanged; this is not a column/document parser.
+    """
+    rows = []
+    for item in sorted(items, key=lambda item: (item[2][1], item[2][0])):
+        _, y1, _, y2 = item[2]
+        if rows:
+            anchor = rows[-1][0][2]
+            overlap = min(y2, anchor[3]) - max(y1, anchor[1])
+            height = min(y2 - y1, anchor[3] - anchor[1])
+            if height > 0 and overlap >= height * 0.5:
+                rows[-1].append(item)
+                continue
+        rows.append([item])
+    return [item for row in rows for item in sorted(row, key=lambda item: item[2][0])]
+
+
 def ocr_boxes(img, *, scale: float = 3.0, languages=('ja-JP', 'en-US')) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Recognize BGR input, returning boxes in original top-left image pixels."""
     if not math.isfinite(scale) or scale <= 0:
@@ -57,4 +78,4 @@ def ocr_boxes(img, *, scale: float = 3.0, languages=('ja-JP', 'en-US')) -> list[
             max(0, min(w, round(max(xs)))), max(0, min(h, round(max(ys)))),
         )
         output.append((str(text), float(confidence), box))
-    return output
+    return _reading_order(output)

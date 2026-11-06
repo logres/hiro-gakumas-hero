@@ -62,3 +62,11 @@ def test_complete_change_scan_replaces_stale_inventory_and_keeps_customization(m
     assert obj.s.state.produce["deck"] == cards
     assert obj.s.state.field_status["produce.deck"] == "verified"
     assert obj.s.events[0].confirmed is True
+
+
+def test_restart_segments_are_chronological_after_nine(tmp_path):
+    for name in ("run", "run-r2", "run-r9", "run-r10", "run-r13", "run-noise"):
+        (tmp_path/name).mkdir()
+    obj = strategy(GameState())
+    obj.s.trace.dir = tmp_path/"run-r14"
+    assert [p.name for p in obj._prior_trace_dirs()] == ["run","run-r2","run-r9","run-r10","run-r13"]

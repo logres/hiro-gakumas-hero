@@ -294,7 +294,7 @@ def _special_guidance_observation(fields: dict) -> dict:
     customized, available, center, customizations[{id, item_index, price, available, source}]}]（选卡画面；选中那张的定制项来自画面 source=screen，
     其余按主数据 source=master）、selected、selected_card、menu{items[{item_index, id, name, price, left, maxed, available, selected, center}], total_left}、
     cards_left、scrollable / at_top / complete。agree 保留（恒为 None）。"""
-    keys = ("view", "cards", "selected", "selected_card", "menu", "cards_left", "scrollable", "at_top", "complete", "produce_point", "stamina", "max_stamina")
+    keys = ("view", "cards", "selected", "selected_card", "menu", "preview", "cards_left", "scrollable", "at_top", "complete", "produce_point", "stamina", "max_stamina")
     out = {k: fields.get(k) for k in keys}
     if out["menu"]:
         out["menu"] = {k: v for k, v in out["menu"].items() if k != "y"}

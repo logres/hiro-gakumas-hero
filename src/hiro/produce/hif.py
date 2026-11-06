@@ -608,7 +608,9 @@ class HiroHifStrategy(HifGrindStrategy):
 
         cur = Path(self.s.trace.dir)
         base = re.sub(r"-r\d+$", "", cur.name)
-        dirs = [d for d in sorted(cur.parent.glob(base + "*")) if d != cur and re.fullmatch(re.escape(base) + r"(-r\d+)?", d.name)]
+        dirs = [d for d in cur.parent.glob(base + "*") if d != cur and re.fullmatch(re.escape(base) + r"(-r\d+)?", d.name)]
+        # Restart suffixes are numeric: lexical r10 < r9 would restore stale state.
+        dirs.sort(key=lambda d: int(m.group(1)) if (m := re.search(r"-r(\d+)$", d.name)) else 0)
         steps = cur / "steps.jsonl"
         if steps.exists() and steps.stat().st_size > 0:
             dirs.append(cur)

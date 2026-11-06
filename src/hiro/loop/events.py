@@ -280,6 +280,13 @@ def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict
         known = type(source_upgrade) is int and source_upgrade >= 0
         E("CARD_UPGRADE", card_id=args["card_id"], upgrade=source_upgrade + 1 if known else None,
           from_upgrade=source_upgrade if known else None, source="event")
+    elif (page == "SPECIAL_GUIDANCE" and kind == "CustomizeCard" and args.get("menu_session") is True
+          and args.get("strict") is True and args.get("card_id")
+          and type(args.get("upgrade")) is int and args["upgrade"] >= 0
+          and type(args.get("levels")) is int and args["levels"] == 1):
+        E("CARD_CUSTOMIZE", card_id=args["card_id"], upgrade=args["upgrade"],
+          customize_id=args.get("customize_id"), item_index=args.get("item_index"),
+          price=args.get("price"), source="observed_menu_execution")
     elif page == "PDRINK_MAX" and kind == "DiscardDrink" and args.get("receive") and args.get("discard"):
         E("DRINK_DISCARD", index=args["discard"][0])
     return ev

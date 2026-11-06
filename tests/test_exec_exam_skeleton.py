@@ -157,7 +157,7 @@ def test_explicit_identity_reaches_source_without_profile_substitution(env):
 
 def test_detail_preopen_change_reobserves_without_deciding(env, monkeypatch):
     readings = iter([False, True])
-    monkeypatch.setattr(ex, "_review_current_card_details", lambda *args: next(readings))
+    monkeypatch.setattr(ex, "_review_current_card_details", lambda *args, **kwargs: next(readings))
     src, adv, brain = Source([]), Advisor(), Brain()
     done = iter([False, False, True])
     ex.run_exam(brain, "r1", Rec(), lambda: next(done), source=src, advisor=adv)

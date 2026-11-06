@@ -1034,7 +1034,7 @@ def _detail_state_facts(img):
     return facts
 
 
-def _review_current_card_details(state, frame, rec):
+def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
     """Optional read-only inspection; never reuse effects after another action."""
     if os.environ.get("HIRO_EXAM_CARD_DETAILS") != "1":
         return True
@@ -1043,14 +1043,35 @@ def _review_current_card_details(state, frame, rec):
     from hiro.brain.card_effect_evidence import attach_card_effect_context
     from hiro.exec.card_detail_review import image_sha256, review_exam_hand_details
 
+    vision_slots = set()
+    if llm is not None and os.environ.get("HIRO_EXAM_CARD_DETAIL_VISION") == "1":
+        from hiro.defaults.exam_state import hand_customization_context
+        available = {card.slot for card in state.hand if card.available}
+        vision_slots = {entry["slot"] for entry in hand_customization_context(state.hand, produce or {})["cards"]
+                        if entry["customization_status"] == "customized" and entry["slot"] in available}
+    detail_images = {}
+    def record_detail(image, evidence):
+        rec.log("exam_card_detail", image=image, evidence=evidence)
+        if evidence["slot"] in vision_slots:
+            from hiro.vision.exam_card_details import DETAIL_REGION
+            x1, y1, x2, y2 = DETAIL_REGION
+            detail_images[evidence["slot"]] = image[y1:y2, x1:x2].copy()
+
     facts = _detail_state_facts(frame.img)
     if facts is None:
         rec.log("exam_card_details_unavailable", reason="initial_state_unverified")
         return True
+    def same_state(image):
+        current = _detail_state_facts(image)
+        if current != facts:
+            differences = {key: {"before": value, "after": current.get(key) if current else None}
+                           for key, value in facts.items() if current is None or current.get(key) != value}
+            rec.log("exam_card_detail_state_changed", image=frame.img, differences=differences)
+        return current == facts
     result = review_exam_hand_details(
         frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,
-        same_state=lambda image: _detail_state_facts(image) == facts,
-        on_detail=lambda image, evidence: rec.log("exam_card_detail", image=image, evidence=evidence))
+        same_state=same_state,
+        on_detail=record_detail)
     rec.log("exam_card_detail_review", image=result.image, restored=result.restored,
             evidence=result.evidence, problems=result.problems)
     if result.problems == ["initial_state_unverified"]:
@@ -1058,6 +1079,22 @@ def _review_current_card_details(state, frame, rec):
     if not result.restored:
         from hiro.loop.resume import ResumeBlocked
         raise ResumeBlocked("Card detail inspection did not restore the original exam; no battle input sent")
+    # Model latency occurs only after the list is closed and the exam is restored.
+    for evidence in result.evidence:
+        crop = detail_images.get(evidence["slot"])
+        if crop is None:
+            continue
+        import cv2
+        from hiro.brain.card_detail_transcription import transcribe_card_detail
+        ok, encoded = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        if not ok:
+            continue
+        transcription = transcribe_card_detail(
+            llm, image_jpeg=encoded.tobytes(), identity={k: evidence[k] for k in ("slot", "card_id", "upgrade")},
+            raw_ocr_lines=evidence["raw_ocr_lines"], snapshot_sha256=evidence["snapshot_sha256"],
+            detail_sha256=evidence["detail_sha256"])
+        evidence["vision_transcription"] = transcription
+        rec.log("exam_card_detail_transcription", image=crop, transcription=transcription)
     state.public_info = attach_card_effect_context(
         state.public_info, state.hand, result.evidence, snapshot_sha256=image_sha256(frame.img))
     return True
@@ -1172,7 +1209,8 @@ def run_exam(
                 animating = True
                 continue
             wait_state.reset()
-            if not _review_current_card_details(state, frame, rec):
+            if not _review_current_card_details(state, frame, rec, llm=brain.llm if hasattr(brain, "llm") else None,
+                                               produce=session.state.produce if session is not None else None):
                 animating = True
                 continue
             last_state = state

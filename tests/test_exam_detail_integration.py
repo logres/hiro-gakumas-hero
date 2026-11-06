@@ -85,3 +85,38 @@ def test_forced_skip_does_not_open_details(monkeypatch):
     state = BattleState("qualify-3", 9, 4, 26, 45, 7, [card])
     assert state.legal_actions() == ["skip"]
     assert exam._review_current_card_details(state, None, None) is True
+
+
+@pytest.mark.parametrize("customized", [True, False])
+def test_vision_runs_only_for_customized_card_after_restoration(monkeypatch, customized):
+    from hiro.brain import card_detail_transcription
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAIL_VISION", "1")
+    image = np.zeros((1280, 720, 3), dtype=np.uint8)
+    identity = {"slot": 0, "card_id": "generic-id", "upgrade": 1}
+    card = SimpleNamespace(**identity, available=True)
+    state = SimpleNamespace(hand=[card], public_info="", legal_actions=lambda: ["play:0", "skip"])
+    evidence = {**identity, "selected_card": identity, "detail_card": identity,
+                "selection_verified": True, "snapshot_sha256": review.image_sha256(image),
+                "detail_sha256": "a" * 64, "raw_ocr_lines": ["追加1"]}
+    restored, calls, events = [], [], []
+    def inspect(*args, **kwargs):
+        kwargs["on_detail"](image, evidence)
+        restored.append(True)
+        return review.ReviewResult([evidence], image, [], True)
+    def transcribe(llm, **kwargs):
+        assert restored == [True]
+        calls.append(kwargs)
+        return {"status": "unavailable", "reason": "test_no_model"}
+    monkeypatch.setattr(review, "review_exam_hand_details", inspect)
+    monkeypatch.setattr(card_detail_transcription, "transcribe_card_detail", transcribe)
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _: {"hp": 20})
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "device",
+                        SimpleNamespace(screenshot=lambda: image, click=lambda _: None))
+    rec = SimpleNamespace(log=lambda kind, **kw: events.append(kind))
+    assert exam._review_current_card_details(state, SimpleNamespace(img=image), rec, llm=object(),
+        produce={"deck": [{"card_id": "generic-id", "upgrade": 1, "customized": customized}]})
+    assert len(calls) == int(customized)
+    assert "追加1" in state.public_info  # Failure keeps original evidence.
+    if customized:
+        assert events.index("exam_card_detail_review") < events.index("exam_card_detail_transcription")

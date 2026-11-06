@@ -19,6 +19,35 @@ def _identity(value):
     return slot, cid, up
 
 
+def _transcription(value, identity, snapshot_hash, detail_hash):
+    """Whitelist bound, unverified model text; omit call traces from public info."""
+    if not isinstance(value, dict) or value.get("status") != "model_transcription_unverified":
+        return None
+    provenance = value.get("provenance")
+    if (not isinstance(provenance, dict) or _identity(provenance.get("identity")) != identity
+            or provenance.get("snapshot_sha256") != snapshot_hash
+            or detail_hash is None or provenance.get("detail_sha256") != detail_hash):
+        return None
+    encoded = provenance.get("encoded_image_sha256")
+    if not isinstance(encoded, str) or re.fullmatch(r"[0-9a-f]{64}", encoded) is None:
+        return None
+    for key in ("adapter", "model", "prompt_version"):
+        text = provenance.get(key)
+        if not isinstance(text, str) or not text.strip() or len(text) > 200:
+            return None
+    for key in ("lines", "uncertain_spans"):
+        lines = value.get(key)
+        if (not isinstance(lines, list) or len(lines) > 40 or (key == "lines" and not lines)
+                or any(not isinstance(line, str) or not line.strip() or len(line) > 500 for line in lines)
+                or sum(map(len, lines)) > 6000):
+            return None
+    return {"status": value["status"], "lines": list(value["lines"]),
+            "uncertain_spans": list(value["uncertain_spans"]),
+            "provenance": {"identity": dict(zip(("slot", "card_id", "upgrade"), identity)),
+                           **{key: provenance[key] for key in ("snapshot_sha256", "detail_sha256",
+                               "encoded_image_sha256", "adapter", "model", "prompt_version")}}}
+
+
 def card_effect_context(hand, evidence=None, *, snapshot_sha256):
     """Return only exact current hand/detail bindings; absence is optional.
 
@@ -30,7 +59,7 @@ def card_effect_context(hand, evidence=None, *, snapshot_sha256):
     Duplicate records for a slot or same-version hand copies are rejected rather
     than arbitrarily selected. Optional detail_sha256 identifies the detail image.
     """
-    result = {"cards": [], "note": "详情 OCR 是本帧原始局部证据，可能缺字或漏行；"
+    result = {"cards": [], "note": "详情 OCR 是本帧原始局部证据，可能缺字或漏行；可选视觉转录也未经验证。"
               "未验证完整效果、费用、条件或语义，不替代 CardView 主数据字段。"}
     if (not isinstance(snapshot_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", snapshot_sha256) is None
@@ -60,14 +89,18 @@ def card_effect_context(hand, evidence=None, *, snapshot_sha256):
         if detail_hash is not None and (not isinstance(detail_hash, str)
                                        or re.fullmatch(r"[0-9a-f]{64}", detail_hash) is None):
             continue
-        result["cards"].append({
+        entry = {
             "slot": identity[0], "card_id": identity[1], "upgrade": identity[2],
             "snapshot_sha256": snapshot_sha256, "evidence_source": "selected_exam_card_detail",
             "raw_ocr_lines": list(lines), "ocr_completeness": "partial",
             "semantic_facts": [], "actual_effects_status": "unknown",
             "customization_effects_known": False,
             **({"detail_sha256": detail_hash} if detail_hash is not None else {}),
-        })
+        }
+        transcription = _transcription(record.get("vision_transcription"), identity, snapshot_sha256, detail_hash)
+        if transcription is not None:
+            entry["vision_transcription"] = transcription
+        result["cards"].append(entry)
     return result
 
 

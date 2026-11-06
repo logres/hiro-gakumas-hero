@@ -1077,7 +1077,8 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
     result = review_exam_hand_details(
         frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,
         same_state=same_state,
-        on_detail=record_detail)
+        on_detail=record_detail,
+        on_rejected_detail=lambda image, data: rec.log("exam_card_detail_rejected", image=image, **data))
     rec.log("exam_card_detail_review", image=result.image, restored=result.restored,
             evidence=result.evidence, problems=result.problems)
     if result.problems == ["initial_state_unverified"]:

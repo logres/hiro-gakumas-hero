@@ -13,7 +13,7 @@ class Image:
 
 
 def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False,
-        fast_calls=None, unresolved_layout=False):
+        fast_calls=None, unresolved_layout=False, on_rejected_detail=None):
     current = Image("exam")
     taps = []
     hand = [SimpleNamespace(slot=0, card_id="a", upgrade=1),
@@ -59,7 +59,8 @@ def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False,
     result = review_exam_hand_details(initial, hand, shoot=lambda: current, click=click,
         sleep=lambda _: None, same_state=lambda im: im.name == "exam",
         read_details=read, find_button=lambda _: (1, 1),
-        close_buttons=lambda _: [] if missing_close else [(9, 9)], max_polls=2, **fast)
+        close_buttons=lambda _: [] if missing_close else [(9, 9)], max_polls=2,
+        on_rejected_detail=on_rejected_detail, **fast)
     return result, taps, initial
 
 
@@ -252,3 +253,31 @@ def test_base_id_fallback_requires_all_known_base_ids(unknown_at):
         find_button=lambda _: (1,1), close_buttons=lambda _: [(9,9)], max_polls=1)
     assert result.restored and not result.evidence
     assert taps == ([(1,1), (10,10), (9,9)] if unknown_at == "after_click" else [(1,1), (9,9)])
+
+
+def test_rejected_callback_receives_final_detail_frame_and_whitelisted_data():
+    rejected = []
+    result, taps, _ = run(mismatch=True, on_rejected_detail=lambda image, data: rejected.append((image, data)))
+    assert result.restored and not result.evidence
+    assert [image.name for image, _ in rejected] == ["a", "b"]
+    assert [data["expected"]["card_id"] for _, data in rejected] == ["a", "b"]
+    for _, data in rejected:
+        assert data["detail"] == {"card_id":"wrong", "upgrade":1}
+        assert data["detail_lines"] == [{"text":"元気+7"}]
+        assert data["raw_title_lines"] == []
+        assert set(data) == {"expected", "selected", "selected_card", "detail", "agree",
+                             "raw_title_lines", "detail_lines", "problems"}
+    assert taps[-1] == (9,9)
+
+
+def test_valid_details_do_not_call_rejected_callback():
+    result, _, _ = run(on_rejected_detail=lambda *_: pytest.fail("valid detail was rejected"))
+    assert result.restored and len(result.evidence) == 2
+
+
+def test_rejected_diagnostic_failure_does_not_change_closing():
+    def broken(*_):
+        raise RuntimeError("diagnostic unavailable")
+    result, taps, _ = run(mismatch=True, on_rejected_detail=broken)
+    assert result.restored and not result.evidence
+    assert taps[-1] == (9,9)

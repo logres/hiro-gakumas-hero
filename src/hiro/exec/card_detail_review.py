@@ -38,7 +38,8 @@ def _identity(card):
 def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                              same_state, read_details=None, find_button=None,
                              close_buttons=None, on_detail=None, read_layout=None,
-                             is_active=None, max_polls=8, poll_gap=0.2):
+                             is_active=None, on_rejected_detail=None,
+                             max_polls=8, poll_gap=0.2):
     """Inspect unambiguous identities, close once, verify full decision state.
 
     ``same_state(image)`` must compare the complete observed decision state to
@@ -150,6 +151,21 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                     break
             if verified is None:
                 problems.append("selected_detail_identity_mismatch")
+                if on_rejected_detail is not None:
+                    lines = [{k: line[k] for k in ("text", "confidence", "box") if k in line}
+                             for line in detail.get("detail_lines", [])]
+                    data = {"expected": {"slot": _get(card, "slot"), "card_id": key[0], "upgrade": key[1]},
+                            "selected": detail.get("selected"), "agree": detail.get("agree"),
+                            **{field: ({k: detail[field][k] for k in ("card_id", "name", "upgrade") if k in detail[field]}
+                                       if isinstance(detail.get(field), dict) else None)
+                               for field in ("selected_card", "detail")},
+                            "raw_title_lines": [line for line in lines if line.get("box") and line["box"][1] < 170],
+                            "detail_lines": lines,
+                            "problems": list(detail.get("problems") or []) + ["selected_detail_identity_mismatch"]}
+                    try:
+                        on_rejected_detail(image, data)
+                    except Exception:
+                        pass  # Diagnostics must not alter inspection or closing.
                 continue
             raw = [line["text"] for line in verified.get("detail_lines", [])
                    if isinstance(line.get("text"), str) and line["text"].strip()]

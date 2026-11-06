@@ -306,6 +306,16 @@ def final_turn_override(state: BattleState, decision: Decision) -> Decision | No
         card = next((c for c in state.hand if c.slot == decision.slot), None)
         if card is None or state.gives_action(card):
             return None
+        # The cash-only plan does not simulate setup -> cash-out. With another
+        # action available it cannot prove that spending one action on a buff is
+        # inferior (r6 seq24: impression +5 was forced AFTER its 100% cash-out).
+        # Keep single-action protection and ordering of resource-clearing cards.
+        import os
+        if (os.environ.get("HIRO_FINAL_TURN_SETUP") == "1"
+                and state.actions_left is not None and state.actions_left > 1
+                and decision.action in state.legal_actions()
+                and not card.tags.clears_genki and card not in _cash_out_cards(state)):
+            return None
         if card.slot == first.slot or (card in plan["cards"] and not card.tags.clears_genki):
             return None
         why = (f"{card.name} 不在最佳兑现组合里" if card not in plan["cards"] else f"{card.name} 会清空元気，应放在最后")

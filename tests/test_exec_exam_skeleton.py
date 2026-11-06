@@ -56,6 +56,7 @@ class Source:
 
     def begin(self, ctx):
         self.calls.append("begin")
+        self.context = ctx
 
     def read(self, frame, memory):
         self.calls.append("read")
@@ -142,3 +143,13 @@ def test_missing_plugins_raise(monkeypatch, env):
     monkeypatch.setattr(ex, "_plugin", lambda kind: None)
     with pytest.raises(RuntimeError):
         ex.run_exam(Brain(), "r1", Rec(), lambda: True)
+
+
+def test_explicit_identity_reaches_source_without_profile_substitution(env):
+    src, adv = Source([]), Advisor()
+    ex.run_exam(Brain(), "qualify-1", Rec(), lambda: True, source=src, advisor=adv,
+                idol_card_id="i_card-skin-kllj-3-000")
+    assert src.context["idol_card_id"] == "i_card-skin-kllj-3-000"
+    other = Source([])
+    ex.run_exam(Brain(), "qualify-1", Rec(), lambda: True, source=other, advisor=adv)
+    assert other.context["idol_card_id"] is None

@@ -1621,7 +1621,8 @@ class HiroHifStrategy(HifGrindStrategy):
             # 先看「次へ」按钮模板（约 60ms），有了才 OCR 顶栏（约 1s）：考试中每轮都要判，第十六局本战每轮都先 OCR 了一次
             return bool(R.Common.ButtonNext.find() and not ocr.find(contains("残りターン"), rect=R.InProduce.BoxExamTop))
 
-        run_exam(self.brain, label, self.rec, ended, session=self.s, advisor=self.advisor)
+        run_exam(self.brain, label, self.rec, ended, session=self.s, advisor=self.advisor,
+                 idol_card_id=self.deciders.idol_card_id)
         self.rec.log("exam_end", image=device.screenshot(), exam=label)
 
         if self._retry_if_failed(label):

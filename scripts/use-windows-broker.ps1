@@ -2,6 +2,9 @@
 # Dot-source in the ordinary PowerShell where Hiro runs. Does not elevate.
 $env:PYTHONUTF8 = '1'
 $env:HIRO_EXPLICIT_IDOL_STATE = '1'
+# Controlled Windows rollout of first-exam build roles and multi-action setup.
+$env:HIRO_REVIEW_FIRST_EXAM_ROLES = '1'
+$env:HIRO_FINAL_TURN_SETUP = '1'
 $env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.broker'
 $env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
 $env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'

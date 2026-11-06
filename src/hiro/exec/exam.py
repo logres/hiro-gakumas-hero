@@ -1024,6 +1024,7 @@ def run_exam(
     source=None,
     advisor=None,
     round_no: int | None = None,
+    idol_card_id: str | None = None,
 ) -> ExamMemory:
     """一场考试的主循环。brain：记忆管理（new_memory / commit）与偶像档案；source / advisor：局面来源与出招（不给时取
     hiro.plugins 注册 / 默认的实现）。session 给出时每个决策点写一条 trace Step（观测 → 状态 → 决策 → 执行结果，带分阶段耗时）。"""
@@ -1039,7 +1040,8 @@ def run_exam(
             memory, restored = got
             rec.log("exam_memory_restored", exam=exam, source=str(restored), turn=memory.turn, last_remaining=memory.last_remaining)
             session.note(f"读回本场考试记忆（{restored.name}）：T{memory.turn}")
-    source.begin({"exam": exam, "profile": brain.profile, "target_score": target_score, "session": session, "brain": brain, "rec": rec})
+    source.begin({"exam": exam, "profile": brain.profile, "target_score": target_score, "session": session, "brain": brain, "rec": rec,
+                  "idol_card_id": idol_card_id})
     advisor.on_round_start(round_no if round_no is not None else (2 if exam == "r2" else 1),
                            {"exam": exam, "idol": brain.profile.idol_id if brain.profile else None, "brain": brain})  # fmt: skip
     rec.log("exam_brain_start", exam=exam, profile=brain.profile.idol_id if brain.profile else None, source=source.confidence())

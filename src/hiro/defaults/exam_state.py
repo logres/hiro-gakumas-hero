@@ -14,6 +14,7 @@ frame 是执行器的帧对象（鸭子类型）：.img、.cards（每个有 .ca
 from __future__ import annotations
 
 import time
+import json
 from typing import Any
 
 from hiro.brain.cards import card_view, drink_view
@@ -89,6 +90,7 @@ class ScreenExamStateSource:
         self.session = None
         self.exam_label: str | None = None
         self.last_raw: dict | None = None
+        self.idol_card_id: str | None = None
 
     def begin(self, context: dict[str, Any]) -> None:
         """context：profile（IdolProfile）/ target_score / session（hiro.loop.session.Session，可选）。"""
@@ -97,6 +99,7 @@ class ScreenExamStateSource:
         self.target_score = ctx.get("target_score")
         self.session = ctx.get("session")
         self.exam_label = ctx.get("exam")
+        self.idol_card_id = ctx.get("idol_card_id")
 
     def read(self, frame: Any, memory: Any) -> tuple[Any | None, str]:
         raw = getattr(frame, "raw", None) or read_screen(frame.img)
@@ -107,6 +110,16 @@ class ScreenExamStateSource:
         fields = screen_fields(observed, self.session, img=getattr(frame, "img", None))
         diagnostics = self.session.notes if self.session is not None else None
         state = screen_state(memory, self.profile, fields, frame, target_score=self.target_score, conflicts=diagnostics)
+        from hiro.brain.route_policy import explicit_route_enabled
+
+        if self.profile is None and explicit_route_enabled():
+            from hiro.brain.exam_context import verified_exam_context
+
+            produce = (self.session.state.produce or {}) if self.session is not None else {}
+            identity = produce.get("idol_card_id") or self.idol_card_id
+            facts = verified_exam_context(identity, fields.get("pitems"))
+            context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
+            state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
         return state, "screen"
 
     def confidence(self) -> str:

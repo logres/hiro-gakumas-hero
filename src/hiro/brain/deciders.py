@@ -391,6 +391,7 @@ class ProduceDeciders:
             owned.setdefault(cid, 0)
         eligible = []
         metadata = {}
+        catalog_rows = {}
         rarity_rank = {"ProduceCardRarity_N": 0, "ProduceCardRarity_R": 1, "ProduceCardRarity_Sr": 2,
                        "ProduceCardRarity_Ssr": 3, "ProduceCardRarity_Legend": 4}
         for i, card in enumerate(raw):
@@ -407,18 +408,24 @@ class ProduceDeciders:
             if recommended_effect or (compatible and rarity is not None and isinstance(row.get("effectGroupIds"), list)):
                 eligible.append(i)
                 metadata[i] = (recommended_effect, rarity if rarity is not None else -1)
+                catalog_rows[i] = row
         if not eligible:
             return wait("没有确认推荐效果或兼容路线元数据的候选：停止，不为其他路线刷新")
         recommended = state.page_fields.get("recommended")
+        from hiro.brain.review_card_roles import cashout_preference
+        cashouts, confirmed_gap, role_reason = cashout_preference(state, idol, catalog_rows, catalog())
         def priority(i):
             card = raw[i]
-            return (metadata[i][0], card["card_id"] not in owned, card["upgrade"] > owned.get(card["card_id"], -1), card["upgrade"], metadata[i][1],
+            return (confirmed_gap and i in cashouts, metadata[i][0], card["card_id"] not in owned, i in cashouts,
+                    card["upgrade"] > owned.get(card["card_id"], -1), card["upgrade"], metadata[i][1],
                     isinstance(recommended, int) and not isinstance(recommended, bool) and i == recommended)
         best_rank = max(priority(i) for i in eligible)
         tied = [i for i in eligible if priority(i) == best_rank]
         chosen = min(tied, key=lambda i: raw[i]["card_id"])
         reason = ("主数据确认符合本人推荐效果" if metadata[chosen][0] else "无明确推荐效果候选，主数据确认同路线或通用卡")
         reason += "；优先未持有、强化较高、稀有度较高、游戏推荐候选"
+        if role_reason and chosen in cashouts:
+            reason = role_reason + "；" + reason
         if len(tied) > 1:
             reason += f"；依据相同，按 card_id 排序取 {raw[chosen]['card_id']}"
         return Decision(Action.activate_effect(chosen), reason, "rule", 0.85, candidates, decider="select_card")

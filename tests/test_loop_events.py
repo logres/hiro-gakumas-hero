@@ -54,7 +54,8 @@ def test_observed_acquire_pairs_with_action(tmp_path):
 
 def test_deck_review_replaces_deck():
     st = GameState(produce={"deck": [{"card_id": "a", "upgrade": 0}]}, pending_review=["produce.deck"])
-    s2, _ = apply_event(st, Event(seq=1, kind="DECK_REVIEW", origin="review", args={"deck": [{"card_id": "b", "upgrade": 1}]}),
+    s2, _ = apply_event(st, Event(seq=1, kind="DECK_REVIEW", origin="review", confirmed=True,
+                                  args={"deck": [{"card_id": "b", "upgrade": 1}]}),
                         predictor=lambda s, e: [])  # fmt: skip
     assert s2.produce["deck"] == [{"card_id": "b", "upgrade": 1}] and s2.pending_review == [] and s2.field_status["produce.deck"] == "verified"
 

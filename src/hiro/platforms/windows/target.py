@@ -3,6 +3,33 @@ import os
 import time
 
 
+def integrity_level(pid: int) -> int:
+    """Read a process token's integrity RID without requesting write access."""
+    import win32api
+    import win32security
+    process = win32api.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+    try:
+        token = win32security.OpenProcessToken(process, 8)  # TOKEN_QUERY
+        try:
+            info = win32security.GetTokenInformation(token, win32security.TokenIntegrityLevel)
+            sid = info[0] if isinstance(info, tuple) else info
+            return sid.GetSubAuthority(sid.GetSubAuthorityCount() - 1)
+        finally:
+            token.Close()
+    finally:
+        process.Close()
+
+
+def ensure_input_access(window) -> None:
+    own = integrity_level(os.getpid())
+    target = integrity_level(window.info.process_id)
+    if own < target:
+        raise PermissionError(
+            f"Game integrity level {target} is higher than Hiro {own}; Windows may block input. "
+            "Run the game and Hiro at the same permission level. No input was sent."
+        )
+
+
 def activate(window):
     """Check the foreground handle, not pywin32's None success return value."""
     import win32con

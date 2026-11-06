@@ -36,6 +36,19 @@ OCR 使用已安装资源中的日文/英文模型，详细实测与限制见 [W
 
 ## 数据与验收
 
+游戏启动后，可先单独核查 Hiro 的实际截图与 OCR，不发送点击：
+
+```powershell
+.venv/Scripts/python.exe tools/probe_windows_game.py
+```
+
+此命令会激活目标窗口，将原始/逻辑截图及 OCR 框保存到忽略目录 `reports/windows-probe/`。
+它验证截图识别链路，不代表游戏接受输入或完整游玩通过。默认仍精确匹配标题 `gakumas`。
+
+报告也记录 Hiro 与游戏的进程完整性级别。游戏高于 Hiro 时，截图可能正常而输入被 Windows
+限制；设备层现在会在点击/滑动前明确报错。先让两者使用相同权限级别，不关闭 UAC 或更改
+安全策略。工具不会自行提权。权限依据见 [Microsoft SendInput/UIPI 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)。
+
 公开游戏数据使用官方 KAA `GameDataUpdater` / `apply_pending` 流程，在仓库根目录单独执行：
 
 ```powershell

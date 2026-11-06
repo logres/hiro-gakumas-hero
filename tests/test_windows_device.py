@@ -18,6 +18,7 @@ def native(monkeypatch):
         if not state.active:
             raise RuntimeError("Windows refused to activate the selected window")
     monkeypatch.setattr(backend, "activate", activate)
+    monkeypatch.setattr(backend, "ensure_input_access", lambda window: None)
     monkeypatch.setattr(backend, "resolve", lambda: (None, None))
     monkeypatch.setattr(WindowsNativeImpl, "__init__", lambda self, *a, **kw: None)
     monkeypatch.setattr(WindowsNativeImpl, "start", lambda self: None)
@@ -63,6 +64,20 @@ def test_activation_failure_stops_device(native):
         backend.connect()
     assert native.stopped == 1
     assert native.clicks == []
+
+
+def test_higher_integrity_blocks_click_before_native_input(native, monkeypatch):
+    from hiro.platforms.windows import target
+    monkeypatch.setattr(target, "integrity_level", lambda pid: 12288 if pid == -1 else 8192)
+    monkeypatch.setattr(backend, "ensure_input_access", lambda window: target.ensure_input_access(
+        SimpleNamespace(info=SimpleNamespace(process_id=-1))))
+    device = backend.connect()
+    try:
+        with pytest.raises(PermissionError, match="higher than Hiro"):
+            device.click(360, 640)
+        assert native.clicks == []
+    finally:
+        device.stop()
 
 
 def test_rejects_unknown_mode_before_window_lookup():

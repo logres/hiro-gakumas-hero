@@ -3,7 +3,7 @@
 Capturing activates the target; input moves the real mouse. No background
 semantics are promised. Enable via HIRO_DEVICE_BACKEND=hiro.platforms.windows.device.
 """
-from .target import activate, resolve
+from .target import activate, ensure_input_access, resolve
 
 
 def connect(backend: str = "auto"):
@@ -27,6 +27,14 @@ def connect(backend: str = "auto"):
     class CheckedNative(WindowsNativeImpl):
         def _ensure_active(self):
             activate(self._window())
+
+        def click(self, x, y):
+            ensure_input_access(self._window())
+            return super().click(x, y)
+
+        def swipe(self, x1, y1, x2, y2, duration=None):
+            ensure_input_access(self._window())
+            return super().swipe(x1, y1, x2, y2, duration)
 
     _, query = resolve()
     device = WindowsDevice()

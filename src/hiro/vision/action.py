@@ -44,14 +44,14 @@ BUTTON_BAND = (840, 1120)  # 行动按钮及其文字、体力消耗
 
 # 按钮文字 → 行动类型
 ACTIONS = [
-    (re.compile(r"(Vo|Da|Vi)\.?公開レッスン"), "open_lesson"),
+    (re.compile(r"(Vo|Da|Vi)\.?公開レッスン", re.IGNORECASE), "open_lesson"),
     (re.compile(r"授業"), "class"),
     (re.compile(r"休む"), "rest"),
     (re.compile(r"相談"), "consult"),
     (re.compile(r"差し入れ"), "present"),
     (re.compile(r"特別指導"), "special_training"),
     (re.compile(r"おでかけ"), "outing"),
-    (re.compile(r"(Vo|Da|Vi)?\.?レッスン"), "lesson"),
+    (re.compile(r"(Vo|Da|Vi)?\.?レッスン", re.IGNORECASE), "lesson"),
 ]
 # 授業按钮右下角属性小图标的色相（OpenCV 0–180）：粉=Vo、蓝=Da、黄=Vi
 ATTR_HUE = {"vo": (160, 180), "da": (95, 115), "vi": (15, 35)}
@@ -84,7 +84,7 @@ class ActionSelectState:
     @property
     def complete(self) -> bool:
         """头部数值齐全、有可选行动且课程类按钮都认出了属性。按钮滑入动画中的帧不完整，应等下一帧。"""
-        lessons_ok = all(o.attr for o in self.options if o.kind in ("class", "open_lesson"))
+        lessons_ok = all(o.attr for o in self.options if o.kind in ("class", "open_lesson", "lesson"))
         return (None not in (self.days_left, self.stamina, self.p_points) and None not in self.params.values()
                 and bool(self.options) and lessons_ok)
 

@@ -223,6 +223,9 @@ class ProduceDeciders:
 
         ps = self.produce_state(state)
         available = state.page_fields.get("options") or None
+        if available and any(o.get("option") in ("training", "class") and o.get("attr") not in ATTRS for o in available):
+            return Decision(Action.ui(ActionKind.WAIT, why="课程属性未识别，等待重读"),
+                            "课程属性未识别，不能生成可执行的课程动作", "rule", 0.1, decider="action_select")
         if available is not None and self.unavailable_options:
             available = [o for o in available if o.get("option") not in self.unavailable_options] or None
         if ps is None:

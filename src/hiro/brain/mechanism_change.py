@@ -147,6 +147,8 @@ def compare(decider, state, identity, stage):
         if set(data) != {"action", "reason"} or data.get("action") != "confirm":
             return _wait("阶段2只允许确认原配对或等待", traces)
         old = plan["pair"]["outgoing"]
-        args = {"stage": 2, "remove_card_id": old["card_id"], "remove_upgrade": old["upgrade"], "strict": True}
+        incoming = plan["pair"]["incoming_after_change"]
+        args = {"stage": 2, "remove_card_id": old["card_id"], "remove_upgrade": old["upgrade"],
+                "card_id": incoming["card_id"], "upgrade": incoming["upgrade"], "strict": True}
     return Decision(Action(ActionKind.CHANGE_CARD, args), data["reason"].strip(), "llm", None,
                     llm=traces, decider="mechanism_change")

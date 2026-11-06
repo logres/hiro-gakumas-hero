@@ -681,6 +681,31 @@ def _change1_row(marks: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return out
 
 
+
+def _change1_selected(img: MatLike, candidates: list[dict]) -> int | None:
+    """Require four independent orange cursor corners, not their total area.
+
+    Selected day17 PNG: all four target corners contain 300–366 orange pixels.
+    The adjacent candidate's right windows overlap the target's left corners and
+    reach 680 pixels in total, while its left corners remain 0/41. Summing them
+    falsely marks two columns. Require each corner separately to reject this.
+    """
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    orange = (hsv[:, :, 0] >= 8) & (hsv[:, :, 0] <= 22) & (hsv[:, :, 1] >= 150) & (hsv[:, :, 2] >= 180)
+    hot = []
+    for c in candidates:
+        cx, cy = c["center"]
+        x, y = cx - CHANGE1_CELL // 2, cy - CHANGE1_CELL // 2
+        e, size, n = CURSOR_EXPAND, CURSOR_CORNER, CHANGE1_CELL
+        corners = ((x-e,y-e),(x+n+e-size,y-e),(x-e,y+n+e-size),(x+n+e-size,y+n+e-size))
+        if any(a < 0 or b < 0 or a+size > img.shape[1] or b+size > img.shape[0] for a,b in corners):
+            continue
+        pixels = [int(orange[b:b+size,a:a+size].sum()) for a,b in corners]
+        if all(p >= 100 for p in pixels):
+            hot.append(c["index"])
+    return hot[0] if len(hot) == 1 else None
+
+
 def read_change_candidates(img: MatLike) -> dict:
     """→ {candidates: [{index, slot, card_id, name, upgrade, recommended, center}], recommended, rerolls_left, excludes_left, complete}。
     complete：找到 3 张且都认出（含强化次数）。没有实机样本，只在 KAA 参考图上核对过。"""
@@ -707,12 +732,7 @@ def read_change_candidates(img: MatLike) -> dict:
         m = re.search(r"あと(\d+)回", "".join(t for t, b in boxes if xr[0] <= (b[0] + b[2]) // 2 <= xr[1]))
         return int(m.group(1)) if m else None
 
-    # Same orange corner cursor as card dialogs; ambiguity remains unknown.
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    hot = [c["index"] for c in cands if _cursor_px(hsv, (c["center"][0] - CHANGE1_CELL // 2,
-            c["center"][1] - CHANGE1_CELL // 2, CHANGE1_CELL, CHANGE1_CELL))
-            >= CURSOR_MIN_PX_118 * (CHANGE1_CELL / 118) ** 2]
-    selected = hot[0] if len(hot) == 1 else None
+    selected = _change1_selected(img, cands)
     complete = len(cands) == 3 and all(c["card_id"] and c["upgrade"] is not None for c in cands)
     return {"selected": selected, "candidates": cands, "recommended": next((c["index"] for c in cands if c["recommended"]), None),
             "excludes_left": left_count((0, 260)), "rerolls_left": left_count((460, 720)), "complete": complete}  # fmt: skip

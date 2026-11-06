@@ -43,8 +43,28 @@ def test_two_stages_preserve_exact_pair_and_inherited_upgrade(state, identity):
     assert payload["pairs"][1]["incoming_after_change"]["master_effect_text"] == "new exact effect 1"
     state.page_fields = {"cards": [dict(c, index=i) for i,c in enumerate(state.produce["deck"])], "deck_complete": True}
     second = module.compare(d, state, identity, 2)
-    assert second.action.args == {"stage": 2, "remove_card_id": "old", "remove_upgrade": 1, "strict": True}
+    assert second.action.args == {"stage": 2, "remove_card_id": "old", "remove_upgrade": 1,
+                                  "card_id": "new", "upgrade": 1, "strict": True}
     assert json.loads(d.llm.calls[1][1])["selected_pair"] == payload["pairs"][1]
+    from hiro.loop.events import events_from_step, apply_event
+    events = events_from_step("SKILL_CARD_CHANGE_2", second.action.to_dict(), True,
+                              state.page_fields, state.produce, seq=20)
+    assert len(events) == 1 and events[0].args["upgrade"] == 1
+    after, _ = apply_event(state, events[0])
+    assert after.produce["deck"] == [{"card_id":"old", "upgrade":0},
+        {"card_id":"duplicate", "upgrade":0}, {"card_id":"duplicate", "upgrade":0},
+        {"card_id":"new", "upgrade":1}]
+    assert after.produce["deck_size"] == 4
+
+
+def test_change_ledger_does_not_remove_wrong_version_or_append_phantom(state):
+    from hiro.contracts import Event
+    from hiro.loop.events import apply_event
+    e = Event(seq=20, kind="CARD_CHANGE", origin="action", args={"remove_card_id":"old",
+        "remove_upgrade":2, "card_id":"new", "upgrade":2}, ref={"decision_seq":20})
+    after, _ = apply_event(state, e)
+    assert after.produce["deck"] == state.produce["deck"]
+    assert "produce.deck" in after.pending_review
 
 @pytest.mark.parametrize("reply", [{"action":"cancel", "reason":"no"}, {"action":"change","pair_id":True,"reason":"x"},
     {"action":"change","pair_id":99,"reason":"x"}, {"action":"change","pair_id":0,"reason":"x","reroll":True},
@@ -114,3 +134,4 @@ def test_strict_stage1_checks_actual_selection_before_next(monkeypatch, selected
     monkeypatch.setattr(R.InProduce.DialogCardChange1,"ButtonNext",button)
     assert kp.change_stage1(None,0,strict=True,expected_card_id="a") is expected_next
     assert button.q.called is expected_next
+    assert dev.click.call_count == (0 if selected == 0 else 1)

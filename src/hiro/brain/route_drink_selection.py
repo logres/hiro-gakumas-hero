@@ -1,8 +1,10 @@
 """Opt-in route-neutral drink choice from master effects and one model call."""
 
 import os
+from dataclasses import replace
 
 from hiro.brain.cards import description_text
+from hiro.brain.mechanism_card_selection import build_context as card_context
 from hiro.contracts import Action, ActionKind, Candidate, Decision, llm_trace_from_call
 from hiro.state.catalog import CatalogUnavailable, catalog
 
@@ -67,7 +69,8 @@ def build_context(state, identity, *, can_skip, n_options=None):
     elif held_raw is not None:
         return None, "持有饮料字段格式未知"
     produce = state.produce or {}
-    return {"idol": {"id": idol.get("id") or identity, "name": idol.get("name"),
+    shared = card_context(replace(state, page_fields={"candidates": []}), idol, {}, catalog())
+    return {"identity_mechanisms": shared["identity_mechanisms"], "deck": shared["deck"], "idol": {"id": idol.get("id") or identity, "name": idol.get("name"),
                      "recommended_effect": idol["examEffectType"], "plan": idol.get("planType")},
             "stage": {"mode": produce.get("mode"), "step": produce.get("step")},
             "known_resources": {key: produce.get(key) for key in ("stamina", "max_stamina", "produce_point")},

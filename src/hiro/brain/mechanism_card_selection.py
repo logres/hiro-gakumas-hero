@@ -1,9 +1,11 @@
 """Optional mechanism comparison over already eligible ordinary card picks."""
 
 import os
+import sqlite3
 from dataclasses import replace
 
 from hiro.brain.cards import description_text
+from hiro.brain.exam_context import _item
 from hiro.brain.route_policy import explicit_route_enabled
 from hiro.contracts import Action, Candidate, Decision, llm_trace_from_call
 from hiro.state.catalog import CatalogUnavailable
@@ -23,6 +25,44 @@ def _view(card_id, upgrade, row, observed):
             "effects_basis": "Master card_id+upgrade only; actual customization effects are unknown."}
 
 
+def identity_context(idol, master):
+    """Exact identity definitions, never evidence of current ownership/equipment."""
+    unavailable = (CatalogUnavailable, KeyError, OSError, sqlite3.Error, AttributeError, ValueError, TypeError)
+    signature = {"card_id": idol.get("produceCardId"), "versions": [],
+                 "status": "unknown", "actual_upgrade_status": "unknown",
+                 "ownership_status": "not_observed", "customization_effects_known": False}
+    if signature["card_id"]:
+        for upgrade in (0, 1):
+            try:
+                row = master.card(signature["card_id"], upgrade)
+                version = _view(signature["card_id"], upgrade, row, {})
+                version["status"] = "verified_master" if version["master_effect_text"] else "effect_unknown"
+            except unavailable:
+                version = {"card_id": signature["card_id"], "upgrade": upgrade,
+                           "master_effect_text": None, "status": "unknown"}
+            signature["versions"].append(version)
+        signature["status"] = "expected_from_identity/not_observed"
+    variants = []
+    for reference in ("beforeProduceItemId", "afterProduceItemId"):
+        item_id = idol.get(reference)
+        item = {"identity_reference": reference, "item_id": item_id, "name": None,
+                "effect_text": None, "status": "unknown"}
+        if item_id:
+            try:
+                item.update(_item(master.one("ProduceItem", item_id)))
+                item["status"] = "verified_master" if item["effect_text"] else "effect_unknown"
+            except unavailable:
+                pass
+        variants.append(item)
+    return {"signature_card": signature,
+            "catalog_identity_item_variants": {
+                "status": "expected_from_identity/not_observed", "actual_upgrade_status": "unknown",
+                "equipment_status": "unknown", "trigger_status": "unknown", "remaining_charges": None,
+                "variants": variants,
+                "note": "Exact IdolCard before/after definitions are alternatives, not combined effects. Neither definition confirms equipment, actual upgrade, awakening, charges or activation."},
+            "basis": "Exact IdolCard master references only. Signature base/upgrade definitions do not establish the currently owned version or customization."}
+
+
 def build_context(state, idol, eligible_rows, catalog):
     """Prepare a read-only, route-neutral context, without making a model call."""
     raw = state.page_fields.get("candidates") or []
@@ -30,16 +70,16 @@ def build_context(state, idol, eligible_rows, catalog):
                   for index, row in eligible_rows.items()]
     produce = state.produce or {}
     raw_deck = produce.get("deck")
-    deck = None if raw_deck is None else []
+    deck = [] if isinstance(raw_deck, list) else None
     versions_known = isinstance(raw_deck, list)
-    for entry in raw_deck or []:
-        card = entry if isinstance(entry, dict) else vars(entry)
+    for entry in raw_deck if isinstance(raw_deck, list) else []:
+        card = entry if isinstance(entry, dict) else vars(entry) if hasattr(entry, "__dict__") else {}
         cid, upgrade = card.get("card_id"), card.get("upgrade")
         row = None
         if cid and type(upgrade) is int and upgrade >= 0:
             try:
                 row = catalog.card(cid, upgrade)
-            except (CatalogUnavailable, KeyError, OSError):
+            except (CatalogUnavailable, KeyError, OSError, sqlite3.Error, AttributeError):
                 pass
         if row is None:
             versions_known = False
@@ -56,11 +96,14 @@ def build_context(state, idol, eligible_rows, catalog):
                     and len(raw_deck) == produce["deck_size"])
     return {"idol": {key: idol.get(key) for key in ("id", "name", "characterId", "planType", "examEffectType",
                                                    "produceCardId", "beforeProduceItemId", "afterProduceItemId")},
+            "identity_mechanisms": identity_context(idol, catalog),
             "stage": {"mode": produce.get("mode"), "step": produce.get("step")},
             "resources": {key: produce.get(key) for key in ("stamina", "max_stamina", "produce_point", "params", "growth_permil")},
             "deck": {"observed_cards": deck, "recorded_size": produce.get("deck_size"),
                      "observed_count": len(raw_deck) if isinstance(raw_deck, list) else None,
-                     "complete": complete, "source": origin, "field_status": state.field_status.get("produce.deck"),
+                     "complete": complete, "source": origin, "source_seq": getattr(source, "seq", None),
+                     "field_status": state.field_status.get("produce.deck"),
+                     "pending_review": [key for key in ("produce.deck", "produce.deck_size") if key in state.pending_review],
                      "versions_known": versions_known,
                      "absence_claim_allowed": complete,
                      "customization_effects_known": False},

@@ -185,12 +185,16 @@ def change_stage1(self, index: int = 0, cancel: bool = False, strict: bool = Fal
             img = device.screenshot()
             if strict:
                 from hiro.vision.deck import read_change_candidates
-                observed = read_change_candidates(img).get("candidates") or []
+                current = read_change_candidates(img)
+                observed = current.get("candidates") or []
                 same = [c for c in observed if c.get("card_id") == expected_card_id
                         and c.get("center") and abs(c["center"][0] - (CHANGE1_MARK_X[index] + 10)) <= CHANGE1_COL_TOL]
                 if len(same) != 1:
                     logger.warning("严格换卡候选已变化/未确认，等待")
                     return False
+                if current.get("selected") == same[0].get("index"):
+                    strict_selected = True
+                    continue  # Resume an already verified choice without toggling it.
             _change_run().snap(img, "stage1")
             device.click(target)
             strict_selected = True

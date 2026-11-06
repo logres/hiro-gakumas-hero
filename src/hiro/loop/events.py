@@ -80,22 +80,25 @@ def _apply_deck(s: GameState, e: Event) -> None:
             deck.append({"card_id": card_id, "upgrade": int(upgrade or 0)})
             changed = True
 
-    def remove(card_id):
+    def remove(card_id, upgrade=None):
         nonlocal changed
-        i = next((i for i, c in enumerate(deck) if c.get("card_id") == card_id), None)
+        i = next((i for i, c in enumerate(deck) if c.get("card_id") == card_id
+                  and (upgrade is None or c.get("upgrade") == upgrade)), None)
         if i is not None:
             deck.pop(i)
             changed = True
+            return True
         elif card_id:
             s.pending_review.append("produce.deck") if "produce.deck" not in s.pending_review else None
+        return False
 
     if e.kind in ("CARD_ACQUIRE", "SHOP_BUY") and a.get("card_id"):
         add(a["card_id"], a.get("upgrade"))
     elif e.kind == "CARD_DELETE":
-        remove(a.get("card_id"))
+        remove(a.get("card_id"), a.get("upgrade"))
     elif e.kind == "CARD_CHANGE":
-        remove(a.get("remove_card_id"))
-        add(a.get("card_id"), a.get("upgrade"))
+        if remove(a.get("remove_card_id"), a.get("remove_upgrade")):
+            add(a.get("card_id"), a.get("upgrade"))
     elif e.kind == "CARD_UPGRADE":
         c = next((c for c in deck if c.get("card_id") == a.get("card_id") and not c.get("upgrade")), None)
         if c is not None:
@@ -237,7 +240,8 @@ def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict
             E("SHOP_BUY", kind="card" if item.get("card_id") else "drink", card_id=item.get("card_id"), drink_id=item.get("drink_id"),
               upgrade=item.get("upgrade"), price=item.get("price"))  # fmt: skip
     elif page == "SKILL_CARD_CHANGE_2" and kind == "ChangeCard" and not args.get("cancel") and args.get("remove_card_id"):
-        E("CARD_CHANGE", remove_card_id=args["remove_card_id"], remove_upgrade=args.get("remove_upgrade"), card_id=args.get("card_id"))
+        E("CARD_CHANGE", remove_card_id=args["remove_card_id"], remove_upgrade=args.get("remove_upgrade"),
+          card_id=args.get("card_id"), upgrade=args.get("upgrade"))
     elif page == "SKILL_CARD_REMOVAL" and args.get("card_id"):
         E("CARD_DELETE", card_id=args["card_id"], upgrade=args.get("upgrade"), source="event")
     elif page == "SKILL_CARD_ENHANCE" and args.get("card_id"):

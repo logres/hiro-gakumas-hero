@@ -47,9 +47,21 @@ def _cy(b) -> int:
 
 def picker_detail_open(boxes) -> bool:
     """The memory inventory picker, excluding formation/details dialogs."""
-    return (any("キャンセル" in t and b[1] > 1100 for t, b in boxes)
-            and any("決定" in t and b[1] > 1100 for t, b in boxes)
-            and any("所持メモリー" in t and b[1] > 990 for t, b in boxes))
+    buttons = (any("キャンセル" in t and b[1] > 1100 for t, b in boxes)
+               and any("決定" in t and b[1] > 1100 for t, b in boxes))
+    if not buttons:
+        return False
+    if any("所持メモリー" in t and b[1] > 990 for t, b in boxes):
+        return True
+    # Formation-management entry omits the owned/rental tab. Require its detail
+    # footer, fixed pager location and memory-specific upper-panel content.
+    footer = any("編成詳細" in t and b[0] < 220 and 990 <= _cy(b) <= 1080 for t, b in boxes)
+    pager = any(310 <= (b[0] + b[2]) // 2 <= 410 and 505 <= _cy(b) <= 560
+                and _norm(t) in ("1/2", "2/2", "12", "22", "112", "212") for t, b in boxes)
+    card_header = any("獲得可能スキルカード" in t and b[0] < 300 and 165 <= _cy(b) <= 220 for t, b in boxes)
+    stats = sum(s["type"] in ("produce_point", "initial_param", "initial_stamina", "param_bonus_pct")
+                for s in parse_ability_page(boxes)["stats"])
+    return footer and pager and (card_header or stats >= 2)
 
 
 def fixed_detail_page(img: MatLike, boxes) -> int | None:
@@ -110,8 +122,8 @@ def parse_stat(text: str) -> dict:
     t = _norm(text)
     if m := re.search(r"初期(ボーカル|ダンス|ビジュアル)上昇\+(\d+)", t):
         return {"type": "initial_param", "attr": ATTR[m.group(1)], "value": int(m.group(2)), "text": t}
-    if m := re.search(r"(ボーカル|ダンス|ビジュアル)[パバ]ラメータ[ボポ]ー?ナ.?ス\+(\d+(?:\.\d+)?)%", t):
-        return {"type": "param_bonus_pct", "attr": ATTR[m.group(1)], "value": float(m.group(2)), "text": t}
+    if m := re.search(r"(ボーカル|ダンス|ビジュアル)[パバ]ラメータ[ボポ]ー?ナ.?ス\+(\d+(?:[.,]\d+)?)%", t):
+        return {"type": "param_bonus_pct", "attr": ATTR[m.group(1)], "value": float(m.group(2).replace(",", ".")), "text": t}
     if m := re.search(r"初期体力上昇\+(\d+)", t):
         return {"type": "initial_stamina", "attr": None, "value": int(m.group(1)), "text": t}
     if m := re.search(r"初期Pポイント\+?(\d+)|Pポイント\+(\d+)", t):
@@ -135,6 +147,11 @@ def read_ability_page(img: MatLike, boxes) -> dict:
     """第 2 页 → {ability, ability_truncated, stats: [parse_stat(...) + {active, truncated}…]}。
     较新的回忆上方有 H.I.F 专用能力蓝框，旧回忆没有（词条方块从顶部开始）。灰底「発動不可」方块（【センス専用】等其他计划 / 其他考试的被动）
     在 H.I.F 里不触发：active=False。方块文字被截断（「もっとみる」）时 truncated=True。"""
+    return parse_ability_page(boxes)
+
+
+def parse_ability_page(boxes) -> dict:
+    """Join each tile's OCR lines before parsing; no image or page detection."""
     texts = [(_norm(t), b) for t, b in boxes if PANEL_Y[0] <= _cy(b) <= PANEL_Y[1] - 5 and not re.fullmatch(r"[12]/2", _norm(t))]
     hint = [b for t, b in texts if _cy(b) <= ABILITY_Y[1] and any(h in t for h in ABILITY_HINTS)]
     ability, truncated, tiles_top = None, None, PANEL_Y[0]

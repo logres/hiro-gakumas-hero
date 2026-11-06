@@ -1,0 +1,111 @@
+{
+  "source": "Synthetic scenario; independent anonymous cards, resources and effects; no trace records",
+  "records": [
+    {
+      "seq": 2,
+      "exam": {
+        "hp": 23,
+        "genki": 17,
+        "hand": [
+          {
+            "slot": 0,
+            "name": "Synthetic setup 0",
+            "card_id": "synthetic-card-0",
+            "upgrade": 0,
+            "available": true,
+            "category": "mental",
+            "cost": 5,
+            "hp_cost": 0,
+            "extra_cost": null,
+            "text": "好印象+8レッスン中1回",
+            "tags": {
+              "once": true
+            },
+            "badge_score": null
+          },
+          {
+            "slot": 1,
+            "name": "Synthetic setup 1",
+            "card_id": "synthetic-card-1",
+            "upgrade": 0,
+            "available": true,
+            "category": "mental",
+            "cost": 2,
+            "hp_cost": 0,
+            "extra_cost": null,
+            "text": "好印象+4レッスン中1回",
+            "tags": {
+              "once": true
+            },
+            "badge_score": null
+          }
+        ],
+        "drinks": [
+          {
+            "slot": 1,
+            "name": "Synthetic action drink",
+            "drink_id": "synthetic-action-drink",
+            "text": "スキルカード使用数追加+1"
+          }
+        ],
+        "buffs": {},
+        "motivation": 6,
+        "impression": 18,
+        "remaining_turns": 2
+      }
+    },
+    {
+      "seq": 3,
+      "exam": {
+        "hp": 23,
+        "genki": 17,
+        "hand": [
+          {
+            "slot": 0,
+            "name": "Synthetic setup 0",
+            "card_id": "synthetic-card-0",
+            "upgrade": 0,
+            "available": true,
+            "category": "mental",
+            "cost": 5,
+            "hp_cost": 0,
+            "extra_cost": null,
+            "text": "好印象+8レッスン中1回",
+            "tags": {
+              "once": true
+            },
+            "badge_score": null
+          },
+          {
+            "slot": 1,
+            "name": "Synthetic setup 1",
+            "card_id": "synthetic-card-1",
+            "upgrade": 0,
+            "available": true,
+            "category": "mental",
+            "cost": 2,
+            "hp_cost": 0,
+            "extra_cost": null,
+            "text": "好印象+4レッスン中1回",
+            "tags": {
+              "once": true
+            },
+            "badge_score": null
+          }
+        ],
+        "drinks": [
+          {
+            "slot": 1,
+            "name": "Synthetic action drink",
+            "drink_id": "synthetic-action-drink",
+            "text": "スキルカード使用数追加+1"
+          }
+        ],
+        "buffs": {},
+        "motivation": 6,
+        "impression": 18,
+        "remaining_turns": 1
+      }
+    }
+  ]
+}

@@ -237,6 +237,9 @@ def fallback(state: BattleState) -> Decision:
     for row in state.action_previews or []:
         if row.get("legal_action") in legal:
             return Decision(row["legal_action"], f"兜底：预演期望终局分最高（{row['期望终局分']:,}）", "fallback")
+    from hiro.brain.fallback_drinks import action_drink_decision, best_direct_impression_action
+    if (drink_decision := action_drink_decision(state)) is not None:
+        return drink_decision
     last = _known_last_turn(state)
     cands = [c for c in state.hand if c.available and c.card_id and not c.tags.is_sleep]
     if not cands:
@@ -244,6 +247,11 @@ def fallback(state: BattleState) -> Decision:
 
     cash = _cash_out_cards(state)
     many_actions = state.actions_left is not None and state.actions_left > 1
+    if (not cash and state.impression is not None
+            and not any(state.gives_action(c) for c in cands)):
+        if (setup := best_direct_impression_action(state)) is not None:
+            slot, gain = setup
+            return Decision(f"play:{slot}", f"末回合无即时兑现牌：优先可支付的直接好印象 +{gain}（层数，非分数），出牌后重读", "fallback")
 
     def score(c) -> float:
         t = c.tags

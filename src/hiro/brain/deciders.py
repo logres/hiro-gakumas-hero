@@ -906,9 +906,10 @@ class ProduceDeciders:
                 "main_attr": best_sup[1]["main_attr"] if best_sup else None}  # fmt: skip
         if args["main_attr"]:
             self.main_attr = args["main_attr"]
-        if best_mem:  # 记忆带进来的卡开局就在牌组里：不再当「必拿还缺」去刷新 / 禁用（第 6 局 デイドリーミング 由记忆带入，仍被列为缺）
+        if best_mem:  # 只有明确写明开局入手的回忆卡，才能提前计为已有
             chosen = next(m for m in memory_sets if m["index"] == best_mem[0])
-            self.picked_musts |= {m["card_id"] for m in chosen.get("memories") or [] if m.get("card_id")}
+            self.picked_musts |= {m["card_id"] for m in chosen.get("memories") or []
+                                  if m.get("card_id") and m.get("timing") == "start"}
         reason = []
         if best_sup:
             p = best_sup[1]

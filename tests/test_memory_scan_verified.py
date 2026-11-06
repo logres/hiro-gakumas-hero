@@ -12,6 +12,65 @@ from tools import memory_inventory as scan
 PICKER = [("キャンセル", (100, 1140, 300, 1180)), ("決定", (490, 1140, 550, 1180)),
           ("所持メモリー", (130, 1020, 280, 1050))]
 
+FORMATION_PICKER = PICKER[:2] + [("編成詳細", (85, 1028, 187, 1059)),
+                                 ("12", (327, 517, 395, 549)),
+                                 ("獲得可能スキルカード", (45, 179, 284, 208))]
+
+
+def test_formation_entry_requires_panel_pager_and_footer():
+    assert memory.picker_detail_open(FORMATION_PICKER)
+    for missing in range(2, 5):
+        assert not memory.picker_detail_open(FORMATION_PICKER[:missing] + FORMATION_PICKER[missing + 1:])
+    assert not memory.picker_detail_open(PICKER[:2])
+    assert not memory.picker_detail_open(PICKER[:2] + [("編成詳細", (85, 1028, 187, 1059))])
+
+
+def test_formation_second_page_uses_memory_stats_and_fixed_pager():
+    boxes = FORMATION_PICKER[:-1] + [("初期Pポイント+50", (45, 315, 310, 345)),
+                                    ("初期ボーカル上昇+20", (420, 315, 650, 345))]
+    assert memory.picker_detail_open(boxes)
+    assert not memory.picker_detail_open(boxes[:-1])
+
+
+def test_split_stat_lines_count_tiles_not_individual_ocr_boxes():
+    boxes = FORMATION_PICKER[:-1] + [
+        ("試験ごとに、以降1回まで", (154, 183, 551, 209)),
+        ("ボーカルパラメータボーナ", (84, 302, 339, 327)),
+        ("ス+2.8％", (86, 327, 178, 355)),
+        ("ダンスパラメータボーナス", (432, 303, 685, 326)),
+        ("+2,8％", (430, 330, 503, 353)),
+        ("ビジュアルパラメータボー", (89, 409, 338, 431)),
+        ("ナス+2,8％", (85, 432, 200, 461)),
+    ]
+    stats = memory.parse_ability_page(boxes)["stats"]
+    assert [(s["type"], s["attr"], s["value"]) for s in stats] == [
+        ("param_bonus_pct", "Vo", 2.8), ("param_bonus_pct", "Da", 2.8), ("param_bonus_pct", "Vi", 2.8)]
+    assert memory.picker_detail_open(boxes)
+    # A single real tile split into two boxes is still insufficient evidence.
+    assert not memory.picker_detail_open(boxes[:7])
+
+
+def test_formation_entry_fixed_pager_still_needs_exact_fraction(monkeypatch):
+    from hiro.vision import ocr
+
+    monkeypatch.setattr(ocr, "ocr", lambda *a, **kw: [("1/2", 1.0)])
+    assert memory.fixed_detail_page(np.zeros((1280, 720, 3), np.uint8), FORMATION_PICKER) == 1
+    monkeypatch.setattr(ocr, "ocr", lambda *a, **kw: [("12", 1.0)])
+    assert memory.fixed_detail_page(np.zeros((1280, 720, 3), np.uint8), FORMATION_PICKER) is None
+
+
+@pytest.mark.parametrize("text", ["112", "212"])
+def test_full_frame_slash_read_as_one_does_not_block_fixed_pager(monkeypatch, text):
+    from hiro.vision import ocr
+
+    boxes = [(text if t == "12" else t, rect) for t, rect in FORMATION_PICKER]
+    assert memory.picker_detail_open(boxes)
+    monkeypatch.setattr(ocr, "ocr", lambda *a, **kw: [("1/2", 1.0)])
+    assert memory.fixed_detail_page(np.zeros((1280, 720, 3), np.uint8), boxes) == 1
+    # The permissive full-frame token cannot certify the actual page.
+    monkeypatch.setattr(ocr, "ocr", lambda *a, **kw: [(text, 1.0)])
+    assert memory.fixed_detail_page(np.zeros((1280, 720, 3), np.uint8), boxes) is None
+
 
 @pytest.mark.parametrize("text,expected", [("1 / 2", 1), ("2/2", 2), ("2 2", None), ("3/2", None), ("1/20", None)])
 def test_fixed_pager_only_accepts_exact_fraction(monkeypatch, text, expected):

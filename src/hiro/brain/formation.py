@@ -75,7 +75,8 @@ def memory_profile(memories: list[dict]) -> dict:
 
     score, hits = 0, []
     swap = [m for m in memories if _swaps_hand(m.get("card_id"))]
-    opening_core = [m for m in memories if m.get("card_id") in OPENING_CORE and any("initial_add" in _customize_text(cid) for cid in m.get("customizations") or [])]
+    opening_core = [m for m in memories if m.get("timing") == "start" and m.get("card_id") in OPENING_CORE
+                    and any("initial_add" in _customize_text(cid) for cid in m.get("customizations") or [])]
     for card_id, name, weight, keys, _why in MEMORY_WANT:
         mem = next((m for m in memories if m.get("card_id") == card_id), None)
         if mem is None:

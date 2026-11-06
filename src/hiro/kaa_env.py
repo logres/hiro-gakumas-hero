@@ -8,8 +8,9 @@ KAA 的培育流程通过 `kaa_context.conf()` / `produce_solution()` 读取配�
   租借格空着就停下（RentalPending），不让 KAA 直接确认列表第一张。写 auto = 用 KAA「おまかせ」（KAA 自己选支援卡和租借，
   会确认列表第一张租借卡），只有明确想这样时才写。
 - HIRO_MEMORY_SET（new 必填）：回忆（メモリー）编成号。写 auto = おまかせ（会改写当前编成位，可能带进和本局方向冲突的牌）。
-- HIRO_MEMORY_CARDS：回忆编成带进培育的技能卡 ID，逗号分隔（如 p_card-02-men-2_004,p_card-02-act-1_037）。
-  决策器把它们算作已有（三选一里不必再找），续跑记账也从它们起算；不设 = 空。
+- HIRO_MEMORY_CARDS：回忆编成对应的技能卡 ID，逗号分隔（如 p_card-02-men-2_004,p_card-02-act-1_037）。
+- HIRO_MEMORY_CARD_TIMINGS：与上列卡逐项对应的 start / mid / unknown，逗号分隔；仅 start 开局就算已有。
+  不设 = 时机未知，不预先计入；方案里的 memory.chosen[].timing 可自动提供对应时机。
 - HIRO_KAA_PROFILE / HIRO_KAA_SOLUTION：KAA 的 profile 名与培育方案名（默认 hiro / hiro-gakumas）。
 - HIRO_FORMATION_PLAN：开局编成方案文件（默认 conf/formation-plan.json，由 python -m hiro.brain.formation_plan 生成；off = 不读）。
   方案存在、且方案的偶像和这局一致时，上面三个变量没设的部分用方案里的值（支援卡 / 回忆编成号、回忆带的卡），
@@ -45,6 +46,24 @@ def _set_env(name: str) -> int | str | None:
 SUPPORT_SET = _set_env("HIRO_SUPPORT_SET")
 MEMORY_SET = _set_env("HIRO_MEMORY_SET")
 MEMORY_CARDS = tuple(c.strip() for c in (os.environ.get("HIRO_MEMORY_CARDS") or "").split(",") if c.strip())
+_MEMORY_CARD_TIMINGS_CONFIG = tuple(t.strip().lower() for t in (os.environ.get("HIRO_MEMORY_CARD_TIMINGS") or "").split(",") if t.strip())
+
+
+def _checked_memory_timings(cards: tuple[str, ...], timings: tuple[str, ...]) -> tuple[str, ...]:
+    """Missing timing means unknown, never an assumed opening card."""
+    if not timings:
+        return ("unknown",) * len(cards)
+    if len(timings) != len(cards) or any(t not in {"start", "mid", "unknown"} for t in timings):
+        raise ValueError("HIRO_MEMORY_CARD_TIMINGS 须与回忆卡逐项对应，值为 start、mid 或 unknown")
+    return timings
+
+
+MEMORY_CARD_TIMINGS = _checked_memory_timings(MEMORY_CARDS, _MEMORY_CARD_TIMINGS_CONFIG) if MEMORY_CARDS else ()
+
+
+def start_memory_cards() -> tuple[str, ...]:
+    """Only confirmed opening acquisitions may seed ownership before any trace event."""
+    return tuple(card for card, timing in zip(MEMORY_CARDS, MEMORY_CARD_TIMINGS) if timing == "start")
 
 
 class SetupMissing(ValueError):
@@ -57,8 +76,8 @@ PLAN_MAIN_ATTR: str | None = None
 
 
 def apply_formation_plan(idol: str | None, path: str | None = None) -> dict | None:
-    """读开局编成方案；环境变量没设的编成号 / 回忆卡用方案的。偶像对不上时不用（写日志）。返回采用的方案或 None。"""
-    global SUPPORT_SET, MEMORY_SET, MEMORY_CARDS, ACTIVE_PLAN, PLAN_MAIN_ATTR
+    """读开局编成方案；环境变量没设的编成号 / 回忆卡与其入手时机用方案的。偶像对不上时不用。"""
+    global SUPPORT_SET, MEMORY_SET, MEMORY_CARDS, MEMORY_CARD_TIMINGS, ACTIVE_PLAN, PLAN_MAIN_ATTR
     from hiro.brain.formation_plan import PLAN_PATH, load
 
     env = os.environ.get("HIRO_FORMATION_PLAN")
@@ -79,6 +98,10 @@ def apply_formation_plan(idol: str | None, path: str | None = None) -> dict | No
         MEMORY_SET = int(mem["set"])
     if not MEMORY_CARDS and mem.get("cards"):
         MEMORY_CARDS = tuple(mem["cards"])
+        by_card = {row.get("card_id"): row.get("timing") for row in mem.get("chosen") or [] if row.get("card_id")}
+        timings = _MEMORY_CARD_TIMINGS_CONFIG or tuple(by_card.get(card) if by_card.get(card) in {"start", "mid"} else "unknown"
+                                                     for card in MEMORY_CARDS)
+        MEMORY_CARD_TIMINGS = _checked_memory_timings(MEMORY_CARDS, timings)
     ACTIVE_PLAN, PLAN_MAIN_ATTR = plan, plan.get("main_attr")
     logger.info("开局编成方案（%s）：支援卡编成 %s、回忆编成 %s、主属性 %s、回忆带的卡 %s", plan.get("created"), SUPPORT_SET, MEMORY_SET,
                 PLAN_MAIN_ATTR, "/".join(MEMORY_CARDS))  # fmt: skip

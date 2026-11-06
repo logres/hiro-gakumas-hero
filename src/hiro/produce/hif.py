@@ -140,9 +140,9 @@ class HiroHifStrategy(HifGrindStrategy):
                                           change_controlled=True,
                                           idol_card_id=solution.idol if os.environ.get("HIRO_EXPLICIT_IDOL_STATE") == "1" else None)
         # 续跑：从同一局之前的 trace 段（<基名>、<基名>-rN）恢复本局已拿到的卡，决策器据此判断必拿卡是否已齐（牌组识别接入前的兜底）
-        from hiro.kaa_env import MEMORY_CARDS
+        from hiro.kaa_env import start_memory_cards
 
-        self.deciders.picked_musts |= set(MEMORY_CARDS) | self._picked_cards_from_trace()  # 回忆带的卡算已有
+        self.deciders.picked_musts |= set(start_memory_cards()) | self._picked_cards_from_trace()
         self._load_finals_context()
         self._seed_produce_from_trace()
         # 同一进程内崩溃重启（run_hif 的 _supervised_resume）时沿用已完成的场次；跨进程续跑用 run_hif --exams-done
@@ -654,16 +654,16 @@ class HiroHifStrategy(HifGrindStrategy):
         return len(deck) or None
 
     def _picked_cards_from_trace(self) -> set[str]:
-        """同一局之前各 trace 段（<基名>、<基名>-rN）按事件记账得到的现有卡（hiro.loop.ledger：拿卡 / 买卡 / 换入 + 回忆，减去换出 / 删除）。"""
+        """同一局之前各 trace 段按事件记账；仅确认开局入手的回忆卡作为初始库存。"""
         import re
 
-        from hiro.kaa_env import MEMORY_CARDS
+        from hiro.kaa_env import start_memory_cards
         from hiro.loop.ledger import owned_cards, steps_of
 
         dirs = self._prior_trace_dirs()
         if not dirs:
             return set()
-        owned = owned_cards(steps_of(dirs), MEMORY_CARDS)
+        owned = owned_cards(steps_of(dirs), start_memory_cards())
         logger.info("续跑：从之前的 trace 记账恢复现有卡 %d 种", len(owned))
         return set(owned)
 

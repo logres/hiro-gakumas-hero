@@ -1,7 +1,7 @@
 """续跑时恢复「本局已拿到的卡」（用户规则 3e）：按 trace 里执行成功的事件顺序记账。
 
 加：三选一拿卡（SELECT_CARD ActivateEffect）、相談买卡（CONSULT ShopBuy 货架上的卡）、换卡换入（SKILL_CARD_CHANGE_1 选中、阶段 2 真的换了）、
-    回忆带的卡（memory_cards，开局获得）；
+    明确开局入手的回忆卡（memory_cards）；晚入手的卡须由实际牌组观测/事件确认；
 减：换卡换出（SKILL_CARD_CHANGE_2 remove_card_id）、删卡事件（SKILL_CARD_REMOVAL card_id）、相談删卡（ShopBuy service=delete，按当时牌组的 card_index）。
 读到完整牌组（DECK_LIST，complete 不为 False）时以牌组为准重置，再接着记之后的事件。
 只用于「必拿卡齐没齐」这类判断；牌组识别到位时决策器以牌组为准。"""
@@ -19,7 +19,7 @@ def _page(step: dict) -> str | None:
 
 
 def owned_cards(steps: Iterable[dict], memory_cards: Iterable[str] = ()) -> Counter:
-    """返回 card_id → 张数。steps 按时间顺序。"""
+    """返回 card_id → 张数。steps 按时间顺序；memory_cards 仅传已确认开局入手的卡。"""
     owned: Counter = Counter(memory_cards)
     pending_in: str | None = None
     for st in steps:

@@ -104,6 +104,16 @@ def _live_verified(d, pages: int, frames_dir: Path) -> list[dict]:
         # selected cell and stable page instead of requiring different text.
         frame = _wait_change(d, None, page, want_cell=cell)
         if not frame[3]:
+            # Preserve the exact failed observation; a later screenshot may
+            # already be stable and hide the reason this transition failed.
+            from hiro.vision.memory import detail_page, picker_detail_open, verified_selected_cell
+            if hasattr(frame[0], "shape"):
+                cv2.imwrite(str(frames_dir / "pending.png"), frame[0])
+                diagnostic = {"wanted_page": page, "wanted_cell": cell,
+                              "picker": picker_detail_open(frame[1]),
+                              "page": detail_page(frame[1], frame[0]),
+                              "cell": verified_selected_cell(frame[0]), "panel": frame[2], "boxes": frame[1]}
+                (frames_dir / "pending.json").write_text(json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8")
             raise MemoryScanPending(f"Memory picker cell {cell}, detail page {page} not verified; scanner stopped")
         return frame
 

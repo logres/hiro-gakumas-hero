@@ -17,13 +17,13 @@
    写出 `conf/formation-plan.json` 和给人看的 `reports/live/formation-plan.md`。`--main-attr` 指定默认主属性，`--fixed-main` 不比较逆练。
 3. 在游戏里按报告把卡存进支援卡编成 20、メモリー編成 20（别覆盖自己常用的编成）。
 4. 开局照常跑 `python tools/play_game.py --idol …`（不用再设编成号）。`hiro.kaa_env` 读到方案，并且方案里的偶像和 `--idol` 一致时：
-   - 支援卡、回忆改用方案里的编成号；回忆带的卡（`HIRO_MEMORY_CARDS` 没设时）交给决策器，算作已经拿到；
+   - 支援卡、回忆改用方案里的编成号；方案的 `memory.chosen[].timing` 区分 `start`（开局入手）、`mid`（首考后入手）与未知。只有确认 `start` 的卡在开局计为已有；其余等牌组观测或实际获得记录确认；
    - 没给 `--main-attr` 时用方案里的主属性；租借格把两页租借列表看完，每张按「加上它之后整个编成的价值」打分（`support_select.rental_scorer`，
      和选自己 5 张同一套估价），租价值最高的（没有方案时仍是「主属性、等级最高，碰到满级立刻租」）；
    - 第 2 步读 5 格支援卡和方案比，第 3 步在 KAA 选完编成后读「N/20」和方案比，再认四格回忆的技能卡小图标和方案的回忆卡比。
      对不上就抛 `FormationMismatch`，不开局，退出码 3。`HIRO_MEMORY_CARD_CHECK=warn` 回忆卡对不上只警告，`off` 不认图标（默认 `block`）。
      没有卡面素材（`AssetSource.card_art_dir()` 为空）时图标一律「认不出」，只警告。
-   没有方案文件时一切照旧。`HIRO_FORMATION_PLAN=off` 不读方案，`HIRO_FORMATION_PLAN=<路径>` 读指定文件。
+   手动设 `HIRO_MEMORY_CARDS` 时，可设等长的 `HIRO_MEMORY_CARD_TIMINGS=start,mid,unknown,...`；未提供时机的卡不会被预先计为已有。旧方案没有 `chosen[].timing` 仍可读取，但时机视为未知。`HIRO_FORMATION_PLAN=off` 不读方案，`HIRO_FORMATION_PLAN=<路径>` 读指定文件。
 
 ## 回忆小图标认卡（`hiro.vision.memory_icons`）
 

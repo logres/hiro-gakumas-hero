@@ -21,3 +21,6 @@ __pycache__/
 /tests/.calib-test/
 # scripts/setup.sh 生成 KAA R.py 的日志
 /.setup-make-resources.log
+
+# Editable Python installation metadata
+*.egg-info/

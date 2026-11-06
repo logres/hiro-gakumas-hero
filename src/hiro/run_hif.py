@@ -4,7 +4,7 @@
     python -m hiro.run_hif resume                      # 继续进行中的培育
     python -m hiro.run_hif new --mode qualify          # 新开选拔赛
     python -m hiro.run_hif new --mode main             # 新开 HIF 本战（需已有选拔赛回忆）
-    选项：--llm claude:sonnet|openai:<model>  --no-llm  --trace <名>  --force（资源清单有问题也跑）
+    选项：--llm claude:sonnet|codex[:model]|openai:<model>  --no-llm  --trace <名>  --force（资源清单有问题也跑）
           --strategy 包.模块:类名（或环境变量 HIRO_STRATEGY）：换培育策略，须是 KAA HifGrindStrategy 的子类
 考试的局面来源 / 出招走插件（hiro.plugins：HIRO_EXAM_STATE_SOURCE / HIRO_EXAM_ADVISOR / HIRO_ASSET_SOURCE，不设用默认实现）。
 
@@ -126,7 +126,7 @@ def main():
     parser.add_argument("--mode", choices=["main", "qualify"], default="main")
     parser.add_argument("--idol", default=None, help="偶像卡 skin id，new 时使用")
     parser.add_argument("--no-llm", action="store_true", help="决策只用规则与兜底，不调用 LLM")
-    parser.add_argument("--llm", default=None, help="LLM 适配器 spec：claude:sonnet（默认）/ openai:<model>；也可用环境变量 HIRO_LLM")
+    parser.add_argument("--llm", default=None, help="LLM 适配器 spec：claude:sonnet（默认）/ codex[:model] / openai:<model>；也可用环境变量 HIRO_LLM")
     parser.add_argument("--main-attr", choices=["Vo", "Da", "Vi"], default=None,
                         help="主属性（按支援卡编成定）；不给时按识别到的支援卡，再不行按成长率推测")
     parser.add_argument("--exams-done", type=int, default=0, help="续跑时已完成的考试场数（决定 qualify-N 标签）")

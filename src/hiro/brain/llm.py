@@ -2,6 +2,7 @@
 """LLM 适配层：决策层只依赖 LLMAdapter 协议（ask_json），换模型只改适配器 / 配置。
 
 - ClaudeCLI：本机 Claude Code CLI（claude -p），走用户订阅额度，无需 API key。
+- CodexCLI：本机 Codex CLI（codex exec），复用 CLI 登录，支持文本与截图。
 - OpenAICompatible：任何 OpenAI Chat Completions 兼容接口（OpenAI / DeepSeek / OpenRouter / Ollama / vLLM…），只用标准库 urllib。
 - MockLLM：测试与离线回放用，按序返回预设回复。
 
@@ -14,7 +15,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -222,6 +225,87 @@ class ClaudeCLI:
         return LLMResult(data, text, dt, None if data is not None else "no json in reply", self.name, self.model, **_claude_usage(result))
 
 
+class CodexCLI:
+    """单次 Codex CLI 推理；临时工作目录、不加载用户配置、不授予游戏操作工具。"""
+
+    name = "codex-cli"
+
+    def __init__(self, model: str | None = None, timeout: float = 60, executable: str | None = None):
+        self.model = model
+        self.timeout = timeout
+        self.executable = executable or os.environ.get("HIRO_CODEX_COMMAND") or shutil.which("codex.exe") or shutil.which("codex") or "codex"
+
+    def ask_json(self, system: str, user: str) -> LLMResult:
+        return self._ask(system, user)
+
+    def ask_json_image(self, system: str, user: str, image_jpeg: bytes) -> LLMResult:
+        return self._ask(system, user, image_jpeg)
+
+    def _ask(self, system: str, user: str, image_jpeg: bytes | None = None) -> LLMResult:
+        t0 = time.monotonic()
+        try:
+            return self._ask_temp(system, user, image_jpeg)
+        except OSError as e:
+            return LLMResult(None, "", time.monotonic() - t0, f"codex temporary files: {e}", self.name, self.model)
+
+    def _ask_temp(self, system: str, user: str, image_jpeg: bytes | None) -> LLMResult:
+        t0 = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="hiro-codex-") as tmp:
+            root = Path(tmp)
+            answer = root / "answer.txt"
+            cmd = [self.executable, "exec", "--ignore-user-config", "--ephemeral",
+                   "--skip-git-repo-check", "--sandbox", "read-only", "--json",
+                   "--color", "never", "--output-last-message", str(answer)]
+            for setting in ('approval_policy="never"', 'features.shell_tool=false',
+                            'features.view_image=false', 'web_search="disabled"',
+                            'features.remote_plugin=false'):
+                cmd += ["-c", setting]
+            if self.model:
+                cmd += ["--model", self.model]
+            cmd += ["-"]
+            if image_jpeg is not None:
+                image = root / "screen.jpg"
+                image.write_bytes(image_jpeg)
+                cmd += ["--image", str(image)]
+            # Keep long Unicode prompts out of Windows argv and explicitly select UTF-8.
+            prompt = f"{system}\n\nReturn only a JSON object. Do not use tools.\n\n{user}"
+            try:
+                proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=self.timeout, cwd=root)
+            except subprocess.TimeoutExpired:
+                return LLMResult(None, "", time.monotonic() - t0, "timeout", self.name, self.model)
+            except OSError as e:
+                return LLMResult(None, "", time.monotonic() - t0, f"codex launch: {e}", self.name, self.model)
+            dt = time.monotonic() - t0
+            usage = {}
+            failed = None
+            for line in (proc.stdout or "").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") == "turn.completed":
+                    u = event.get("usage") or {}
+                    cached = u.get("cached_input_tokens")
+                    total = u.get("input_tokens")
+                    usage = {"input_tokens": total - cached if isinstance(total, int) and isinstance(cached, int) else total,
+                             "cache_read_input_tokens": cached, "output_tokens": u.get("output_tokens")}
+                if event.get("type") in ("turn.failed", "error"):
+                    failed = str(event.get("error") or event.get("message") or event["type"])[:300]
+            if proc.returncode or failed:
+                detail = failed or (proc.stderr or "").strip()[:300]
+                return LLMResult(None, (proc.stdout or "")[-2000:], dt,
+                                 f"exit {proc.returncode}: {detail}", self.name, self.model, **usage)
+            try:
+                text = answer.read_text(encoding="utf-8")
+            except OSError:
+                return LLMResult(None, "", dt, "missing codex final message", self.name, self.model, **usage)
+            data = extract_json(text)
+            return LLMResult(data, text, dt, None if data is not None else "no json in reply", self.name, self.model, **usage)
+
+
 class OpenAICompatible:
     """OpenAI Chat Completions 兼容接口。要求 JSON 回复（response_format json_object，不支持的端点也靠 extract_json 兜底）。"""
 
@@ -303,18 +387,20 @@ class MockLLM:
 
 
 def from_spec(spec: str | None = None, **kw) -> LLMAdapter:
-    """"claude[:model]" / "openai:<model>" / "mock" → 适配器。spec 为 None 时读 HIRO_LLM，缺省 claude:sonnet。"""
+    """claude[:model] / codex[:model] / openai:<model> / mock；缺省 claude:sonnet。"""
     spec = spec or os.environ.get("HIRO_LLM") or "claude:sonnet"
     kind, _, model = spec.partition(":")
     if kind in ("claude", "claude-cli"):
         return ClaudeCLI(model=model or "sonnet", **kw)
+    if kind in ("codex", "codex-cli"):
+        return CodexCLI(model=model or None, **kw)
     if kind in ("openai", "openai-compatible"):
         if not model:
             raise ValueError("openai 适配器需要模型名：openai:<model>")
         return OpenAICompatible(model, **kw)
     if kind == "mock":
         return MockLLM(**kw)
-    raise ValueError(f"未知的 LLM spec：{spec!r}（支持 claude[:model] / openai:<model> / mock）")
+    raise ValueError(f"未知的 LLM spec：{spec!r}（支持 claude[:model] / codex[:model] / openai:<model> / mock）")
 
 
 def extract_json(text: str) -> dict | None:

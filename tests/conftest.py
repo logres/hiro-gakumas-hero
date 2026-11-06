@@ -31,7 +31,7 @@ if os.environ.get("HIRO_KAA_GAME_DATA"):
 OPTIONAL_LAYERS = ("hiro.loop.controller", "hiro.loop.kaa_patches", "hiro.produce", "hiro.brain.state", "hiro.brain.cards",
                    "hiro.brain.deciders", "hiro.brain.rules", "hiro.brain.replay", "hiro.sim")  # fmt: skip
 KAA_USERS = re.compile(r"hiro\.(?:vision|perception)(?:\.(\w+))?")
-KAA_FREE = {"assets", "layout", "items", "region_cache"}  # 导入时不碰 KAA 的识别层模块（items 只在读饮料时才导入 KAA）
+KAA_FREE = {"assets", "layout", "items", "region_cache", "ocr"}  # 导入时不碰 KAA 的识别层模块（items 只在读饮料时才导入 KAA）
 
 
 def _needs_kaa(src: str) -> bool:

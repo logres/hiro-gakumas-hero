@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from cv2.typing import MatLike
 
-from hiro.vision.digits import read_number
+from hiro.vision.digits import read_dddd, read_number
 from hiro.vision.ocr import ocr, ocr_boxes
 
 ATTRS = ("vo", "da", "vi")
@@ -116,6 +116,8 @@ def _options(img: MatLike) -> list[ActionOption]:
     out = []
     for text, b in tokens:
         compact = text.replace(" ", "")
+        if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+            compact = re.sub(r"V0(?=\.?(?:公開)?レッスン)", "Vo", compact)
         for pattern, kind in ACTIONS:
             m = pattern.search(compact)
             if not m:
@@ -166,6 +168,16 @@ def read_stamina(img: MatLike) -> tuple[int, int] | None:
     先严格读（放大 4 倍、2 倍各一次），都不成再按斜杠误读规则拆。"""
     x1, y1, x2, y2 = STAMINA_BOX
     crop = img[y1:y2, x1:x2]
+    if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+        # RapidOCR's overlapping segments can both include the same slash:
+        # ["34/", "/45"]. Accept that overlap only as one complete fraction.
+        text = "".join(t for t, _ in ocr(crop, scale=1, languages=("en-US",))).replace(" ", "")
+        match = re.fullmatch(r"(\d+)/{1,2}(\d+)", text)
+        if match:
+            cur, cap = map(int, match.groups())
+            if cap > 0 and cur <= cap:
+                return cur, cap
+        return None
     texts = []
     for scale in (4, 2):
         text = "".join(t for t, _ in ocr(crop, scale=scale, languages=("en-US",)))
@@ -177,16 +189,32 @@ def read_stamina(img: MatLike) -> tuple[int, int] | None:
     return next((r for t in texts if (r := parse_stamina(t))), None)
 
 
+def _read_windows_days(img: MatLike, exam: str | None) -> int | None:
+    # HIF's largest interval is seven positions (six action days). Require the
+    # recognized exam label plus agreement between two numeric-only crops.
+    if not exam or not re.search(r"選抜試験[123]|本戦", exam):
+        return None
+    values = [read_dddd(img, box) for box in ((65, 75, 120, 132), (62, 72, 123, 135))]
+    return values[0] if values[0] == values[1] and values[0] is not None and 0 <= values[0] <= 6 else None
+
+
 def read_action_select(img: MatLike) -> ActionSelectState:
     header = " ".join(t for t, _ in ocr(img[:HEADER_BAND, :280], scale=2))
     exam = re.search(r"(\S+?)まで", header)
     days = re.search(r"(\d+)\s*日", header)
+    days_left = int(days.group(1)) if days else None
+    if days_left is None and os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+        days_left = _read_windows_days(img, exam.group(1) if exam else None)
     stamina = read_stamina(img)
-    # RapidOCR at 4x fragments these small HUD strings and drops digits / decimal
-    # points (260 → 26, 55.8% → 558%). Native-size crops preserve the full text.
+    # RapidOCR enlargements fragment percentage text (55.8% → 558%). Native
+    # text-only crops preserve decimals; P digits use the existing digit reader.
     native_numeric = os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
     numeric_scale = 1 if native_numeric else 4
-    points = re.search(r"\d+", "".join(t for t, _ in ocr(img[slice(*POINTS_BOX[1::2]), slice(*POINTS_BOX[::2])], scale=numeric_scale, languages=("en-US",))))
+    if native_numeric:
+        p_points = read_number(img, POINTS_BOX)
+    else:
+        points = re.search(r"\d+", "".join(t for t, _ in ocr(img[slice(*POINTS_BOX[1::2]), slice(*POINTS_BOX[::2])], scale=4, languages=("en-US",))))
+        p_points = int(points.group()) if points else None
 
     def small_text(box) -> str:
         x1, y1, x2, y2 = box
@@ -205,10 +233,10 @@ def read_action_select(img: MatLike) -> ActionSelectState:
     advice = "".join(t for t, _ in ocr(img[slice(*ADVICE_BAND)], scale=2)) or None
     return ActionSelectState(
         exam=exam.group(1) if exam else None,
-        days_left=int(days.group(1)) if days else None,
+        days_left=days_left,
         stamina=stamina[0] if stamina else None,
         max_stamina=stamina[1] if stamina else None,
-        p_points=int(points.group()) if points else None,
+        p_points=p_points,
         params={a: read_number(img, box) for a, box in stat_boxes(img).items()},
         param_caps=caps,
         growth_pct=growth,

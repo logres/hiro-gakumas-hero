@@ -8,6 +8,7 @@
 """
 
 import math
+import os
 import threading
 
 from hiro.brain import hif_rules as rules
@@ -156,7 +157,12 @@ def exam_brief(state: ProduceState, mode: str, position: int) -> dict:
         return {"场次": label, "日程位置": position, "说明": "考试要求 / 倍率数据未知（没有接 exam_requirements 插件），不估审查评定和倍率"}
     cfg = prev["source"]["battle_config"]
     req = {"Vo": cfg["vocal"], "Da": cfg["dance"], "Vi": cfg["visual"]}
-    kind, order = idol_trend(state.idol_card_id)
+    try:
+        kind, order = idol_trend(state.idol_card_id)
+    except KeyError:
+        if os.environ.get("HIRO_PUBLIC_LESSON_FALLBACK") != "1":
+            raise
+        return {"场次": label, "日程位置": position, "说明": "偶像流行顺序未知，不估回合分配和倍率"}
     split = dict(zip(order, TURN_SPLIT[kind][key]))
     baseline = multiplier.star_baseline(mode, position, state.idol_card_id, catalog())
     factor = multiplier.star_factor(state.star, baseline)
@@ -324,7 +330,12 @@ def r1_bonus_gain(state: ProduceState, delta: dict) -> int | None:
     gains = {a: delta[a] for a in ATTRS if delta.get(a)}
     if state.mode != FINALS or not gains or not params_complete(state.params):
         return None
-    kind, order = idol_trend(state.idol_card_id)
+    try:
+        kind, order = idol_trend(state.idol_card_id)
+    except KeyError:
+        if os.environ.get("HIRO_PUBLIC_LESSON_FALLBACK") != "1":
+            raise
+        return None
     turns = dict(zip(order, TURN_SPLIT[kind]["r1"]))
 
     def total(params: dict) -> int:
@@ -410,12 +421,39 @@ def _likely_sub(state: ProduceState, main: str) -> tuple[str, str]:
 
 def preview_lessons(state: ProduceState, lessons: list[LessonOption], unknown: set[str] | frozenset = frozenset()) -> list[dict]:
     st = schedule(state.mode).stage(state.step)
-    rows = [catalog().one("ProduceStepOpenLesson", k) for k in st["open_lesson_ids"]]
+    public_fallback = os.environ.get("HIRO_PUBLIC_LESSON_FALLBACK") == "1"
+    def unavailable(o: LessonOption) -> dict:
+        return {"option": "training", "attr": o.main, "sp": o.sp,
+                "选项": f"{o.main} 课程", "预演": "未知：当前日程没有对应的公开课程数据，以画面为准", "delta": {}}
+
+    ids = st.get("open_lesson_ids") if public_fallback else st["open_lesson_ids"]
+    if public_fallback and (not ids or st.get("base_p_points") is None):
+        return [unavailable(o) for o in lessons]
+    try:
+        rows = [catalog().one("ProduceStepOpenLesson", k) for k in ids]
+    except (CatalogUnavailable, KeyError):
+        if not public_fallback:
+            raise
+        return [unavailable(o) for o in lessons]
     out = []
     for o in lessons:
-        sub, sub_note = (o.sub, None) if o.sub else _likely_sub(state, o.main)
+        try:
+            sub, sub_note = (o.sub, None) if o.sub else _likely_sub(state, o.main)
+        except KeyError:
+            if not public_fallback:
+                raise
+            entry = unavailable(o)
+            entry["预演"] = "未知：副属性未识别，偶像流行顺序未知，不估课程收益"
+            out.append(entry)
+            continue
         for sp in ([o.sp] if o.sp is not None else [True, False]):
-            row = next(r for r in rows if r["subParameterType"].endswith(_ENUM[sub]) and ("-sp-" in r["id"]) == sp)
+            row = next((r for r in rows if r.get("subParameterType", "").endswith(_ENUM[sub])
+                        and ("-sp-" in r.get("id", "")) == sp), None)
+            if row is None or any(row.get(k) is None for k in ("mainParameter", "subParameter", "star", "stamina")):
+                if not public_fallback:
+                    raise KeyError("当前课程主数据不完整")
+                out.append(unavailable(LessonOption(o.main, sub, sp)))
+                continue
             gains = {o.main: _scale(row["mainParameter"], state.growth_permil[o.main]),
                      sub: _scale(row["subParameter"], state.growth_permil[sub])}  # fmt: skip
             after, real = _apply_params(state, gains)
@@ -524,7 +562,7 @@ def preview_action_select(state: ProduceState, available: list[dict] | None = No
         else:
             out.append(_simple_entry(state, opt, unknown))
     for row in out:
-        if row.get("option") in ("training", "class") and (g := r1_bonus_gain(state, row.get("delta") or {})) is not None:
+        if row.get("option") in ("training", "class") and row.get("delta") and (g := r1_bonus_gain(state, row["delta"])) is not None:
             row["R1倍率增量"] = g  # Σ 每回合倍率(‰) × 回合数 的增量，越大越好（本战课程 / 授業补哪项看它）
     for i, row in enumerate(out):
         row["index"] = i

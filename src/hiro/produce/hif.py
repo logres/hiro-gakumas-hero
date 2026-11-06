@@ -187,7 +187,16 @@ class HiroHifStrategy(HifGrindStrategy):
 
     def on_action_select(self, ctx: "ActionSelectContext"):
         t0 = time.monotonic()
-        obs = self.s.observe_complete("ACTION_SELECT", ACTION_REQUIRED)
+        def observe_action():
+            require_day = os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
+            required = (*ACTION_REQUIRED, "mode", "step") if require_day else ACTION_REQUIRED
+            current = self.s.observe_complete("ACTION_SELECT", required)
+            missing = [k for k in required if current.fields.get(k) is None]
+            if require_day and (missing or current.fields.get("complete") is False):
+                self._stop("ACTION_SELECT", f"当前帧行动状态不完整（缺 {missing}），不使用旧状态选行动", obs=current)
+            return current
+
+        obs = observe_action()
         # 先等选行动页读完整（淡入结束、能点了）再开牌组一览（第二十局开局：页面刚出来就点，一览很晚才弹）
         self._maybe_review_deck()
         actions, objects = ctx.fetch_available_actions()
@@ -199,7 +208,7 @@ class HiroHifStrategy(HifGrindStrategy):
                 break
             sleep(self.SELECT_RETRY_WAIT)
             device.screenshot()
-            obs = self.s.observe_complete("ACTION_SELECT", ACTION_REQUIRED)
+            obs = observe_action()
             actions, objects = ctx.fetch_available_actions()
             d = self.deciders.decide("ACTION_SELECT", self.s.state)
         if d.action.kind is ActionKind.WAIT:

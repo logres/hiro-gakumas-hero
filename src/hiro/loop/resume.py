@@ -6,6 +6,7 @@ KAA 的再開流程只认识本战的再開对话框（ResumeDialogHifMain），
 一律点「キャンセル」并停止——破弃是用户才能做的决定。已经在培育页面时直接开始主循环。
 """
 
+import os
 import time
 
 from kaa.config.const import HifScenario
@@ -39,6 +40,9 @@ def guard_new(*, timeout: float = 15.0) -> None:
     if not at_home():
         return  # 不在首页：交给 do_produce 自己导航；它遇到破弃对话框时 kaa_patches.NeverConfirmDiscard 只点キャンセル 并抛 ResumeBlocked
     device.click(R.Produce.BoxProduceOngoing)
+    attempts = 1
+    last_click = active_clock()
+    home_retry = os.environ.get("HIRO_WINDOWS_HOME_RETRY") == "1"
     deadline = active_clock() + timeout  # 录屏暂停期间不计时（hiro.loop.pause_flag）
     while active_clock() < deadline:
         time.sleep(1)
@@ -50,6 +54,14 @@ def guard_new(*, timeout: float = 15.0) -> None:
             raise ResumeBlocked("本机有进行中的培育（看到「再開する」），请用 `run_hif resume` 继续，而不是新开。")
         if R.Produce.LogoHajime.exists() or R.Produce.LogoNia.exists() or R.Produce.LogoHif.exists():
             return
+        # Windows 实测首次点击偶尔无效果：只在新帧仍明确是首页时补点，
+        # 不把超时 / 未知画面当成可以重试的依据。弹窗保护必须先于补点。
+        now = active_clock()
+        if home_retry and attempts < 3 and now < deadline and now - last_click >= 2.0 and at_home():
+            logger.info("仍在首页，重试「プロデュース中」（%s/3）", attempts + 1)
+            device.click(R.Produce.BoxProduceOngoing)
+            attempts += 1
+            last_click = active_clock()
     raise TimeoutError("点「プロデュース中」后既没有再開对话框也没有剧本选择页")
 
 
@@ -166,6 +178,14 @@ def _assist_step(assist, img, boxes) -> bool:
         return False
 
 
+def _try_home_button() -> bool:
+    if R.Common.ButtonHome.try_click():
+        return True
+    # DMM 的底栏首页与普通首页按钮不同；复用 KAA 已有的定点模板，
+    # 只在 Windows 实测开关打开时启用，不盲点底栏坐标。
+    return os.environ.get("HIRO_WINDOWS_HOME_RETRY") == "1" and R.Common.ButtonToolbarHome.try_click()
+
+
 def finish_produce_end(*, timeout: float = 180.0, go_home: bool = False) -> bool:
     """把培育结束后的结算画面（「プロデュース完了」、获得道具、升级、活动积分、关注制作人等）点回首页。
     KAA 的 goto_home 不认 H.I.F 的「プロデュース完了」页；这里按时间封顶（kotonebot Loop 不检查 timeout）。
@@ -196,7 +216,7 @@ def finish_produce_end(*, timeout: float = 180.0, go_home: bool = False) -> bool
             continue
         if go_home and any("開始確認" in t or "本戦へ" in t for t in texts):
             # run_hif new：要从首页走 KAA 的开局流程，这里自己回首页（不点「本戦へ」，开局由 KAA 走带回忆核对的 step4）
-            if not R.Common.ButtonHome.try_click():
+            if not _try_home_button():
                 dev.click(85, 1185)  # 左下角首页图标
             time.sleep(1.0)
             continue
@@ -218,7 +238,7 @@ def finish_produce_end(*, timeout: float = 180.0, go_home: bool = False) -> bool
             logger.info("回忆照片确认：点「決定」")
             time.sleep(1.5)
             continue
-        if go_home and R.Common.ButtonHome.try_click():
+        if go_home and _try_home_button():
             # 不在结算画面、而在带底栏的普通页面（第二十局开局：每日跑完停在サークル页，下面的点中央 / 次へ 都没用，空等 180s）：直接点首页
             logger.info("开局前不在首页（%s）：点底栏首页", " / ".join(texts[:2]))
             time.sleep(1.5)

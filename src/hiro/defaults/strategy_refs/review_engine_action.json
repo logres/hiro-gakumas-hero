@@ -1,0 +1,38 @@
+{
+  "id": "review-first-exam-engine-action",
+  "version": "0.1.0",
+  "status": "internal_candidate",
+  "validation": "Repository-derived advice with synthetic checks only; no cross-route live validation or causal win-rate claim.",
+  "source": [
+    {
+      "kind": "repository_prompt",
+      "path": "src/hiro/brain/prompts/exam_generic.md",
+      "version": "1.2",
+      "section": "比较当前行动与剩余整场收益，条目2、3、4、5",
+      "supports": "Compare remaining trigger opportunities, the concrete extra action enabled by a drink, and uncertainty after draw/discard."
+    },
+    {
+      "kind": "repository_bounded_heuristic",
+      "path": "src/hiro/brain/fallback_drinks.py",
+      "functions": ["action_drink_decision", "_pay"],
+      "supports": "Known affordability and additional direct benefit are prerequisites for the implemented final-turn fallback; this is not evidence of early-turn optimality."
+    }
+  ],
+  "applicability": {
+    "recommended_effects": ["ProduceExamEffectType_ExamReview"],
+    "exam_labels": ["qualify-1"],
+    "stage_note": "First selection exam only. Do not infer the second or third exam from a character name, or extend first-exam assumptions to finals."
+  },
+  "instruction": "Advisory comparison material only. It neither mandates an action nor overrides legal_actions, blocked actions, payment conditions, card text, observations or later safety guards.",
+  "principles": [
+    "When a visible impression engine can still trigger across remaining turns, compare installing it now with immediate benefit. Check its exact trigger timing, conditions and whether it is already installed; do not assign unobserved future stack totals.",
+    "Compare an action drink with the additional affordable actions it enables this turn, including engine installation and direct setup. Do not always reserve it for the final two turns, and do not drink without a concrete useful follow-up.",
+    "Separate direct impression stacks, immediate badge score and future recurring benefit. They are different quantities; do not add them as if they were one score.",
+    "After drawing or random generation, stop the fixed plan and re-observe. A card discarded this turn is not guaranteed to return before the exam ends."
+  ],
+  "unknowns": [
+    "This reference does not know equipped item variants, awakening, customizations or remaining charges unless explicitly observed.",
+    "Unknown action count, resources, conditions or future draws remain unknown; do not turn a mechanism possibility into a guaranteed activation.",
+    "The reference contains no learned per-character weights, automatic outcome feedback or claim that one successful run proves a strategy."
+  ]
+}

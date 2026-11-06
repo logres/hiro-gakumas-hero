@@ -120,6 +120,8 @@ class ScreenExamStateSource:
             facts = verified_exam_context(identity, fields.get("pitems"))
             context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
             state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
+            from hiro.brain.strategy_references import select_references
+            state.strategy_references = select_references(identity, state.exam)
         return state, "screen"
 
     def confidence(self) -> str:

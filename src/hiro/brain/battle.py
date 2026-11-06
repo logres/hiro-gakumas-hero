@@ -103,10 +103,12 @@ class BattleBrain:
 
     def _ask(self, state: BattleState) -> Decision | None:
         payload = state.to_prompt_dict()
+        from hiro.brain.strategy_references import audit_suffix
+        call_version = self.prompt_version + audit_suffix(state.strategy_references)
         user = "当前状态：\n" + json.dumps(payload, ensure_ascii=False)
         for attempt in range(self.max_retries + 1):
             res = self.llm.ask_json(self.system, user)
-            self.calls.append(res.record(prompt_version=self.prompt_version))
+            self.calls.append(res.record(prompt_version=call_version))
             if res.data is None:
                 logger.warning("LLM 调用失败：%s", res.error)
                 return None

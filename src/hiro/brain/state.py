@@ -199,6 +199,7 @@ class BattleState:
     buffs: dict = field(default_factory=dict)  # 其余状态栏条目，键为状态名
     target_score: int | None = None  # 本场需要的分数（对手/过线），已知时填
     public_info: str | None = None  # 其他公开信息（牌堆/弃牌组成等），读到时填
+    strategy_references: list[dict] = field(default_factory=list)  # opt-in advisory data with provenance/version/hash
     action_previews: list[dict] | None = None  # 本地模拟器对每个合法动作的预演（hiro.sim.preview.prompt_block）
     item_charges_left: int | None = None
     actions_left: int | None = None
@@ -497,6 +498,7 @@ class BattleState:
             "target_score": self.target_score,
             "buffs": self.buffs or None,
             "public_info": self.public_info,
+            "strategy_references": self.strategy_references or None,
             "item_charges_left": self.item_charges_left,
             "actions_left_estimate": self.actions_left,
             "action_budget": self.action_budget(),
@@ -527,6 +529,11 @@ class BattleState:
             "action_previews": self.action_previews,
         }
         out = {k: v for k, v in d.items() if v is not None}
+        if self.strategy_references:
+            # Preserve exact hand identity/version when references are supplied;
+            # an unrecognized placeholder has no known upgrade version.
+            for view, card in zip(out["hand"], self.hand):
+                view.update(card_id=card.card_id, upgrade=card.upgrade if card.card_id else None)
         unknown = self.unknown_fields()
         for n in unknown:  # 没读到的核心字段显式标出来，不能省略（省略容易被当成 0 或「没有」）
             out[_PROMPT_NAME.get(n, n)] = UNKNOWN

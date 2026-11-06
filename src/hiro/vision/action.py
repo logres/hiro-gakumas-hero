@@ -104,6 +104,25 @@ def _attr_by_badge(img: MatLike, cx: int, cy: int) -> str | None:
     return best if counts[best] >= 30 else None
 
 
+def _lesson_prefix_attr(img: MatLike, box: tuple[int, int, int, int]) -> str | None:
+    """Read the actual label's Latin prefix, independent of button column."""
+    x1, y1, _, y2 = box
+    crop = img[max(0, y1 - 3):y2 + 3, max(0, x1 - 3):x1 + 29]
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, (0, 0, 175), (180, 100, 255))
+    prepared = cv2.copyMakeBorder(255 - white, 8, 8, 8, 8, cv2.BORDER_CONSTANT, value=255)
+    prepared = cv2.cvtColor(prepared, cv2.COLOR_GRAY2BGR)
+    votes = []
+    for scale in (2, 4):
+        tokens = ocr(prepared, scale=scale, languages=("en-US",))
+        text = "".join(text for text, _ in tokens).strip()
+        match = re.fullmatch(r"(Vo|Da|Vi)\.?", text, re.IGNORECASE)
+        if not tokens or any(confidence < .9 for _, confidence in tokens) or match is None:
+            return None
+        votes.append(match.group(1).lower())
+    return votes[0] if len(set(votes)) == 1 else None
+
+
 def _options(img: MatLike) -> list[ActionOption]:
     y1, y2 = BUTTON_BAND
     tokens = [(t, (b[0], b[1] + y1, b[2], b[3] + y1)) for t, _, b in ocr_boxes(img[y1:y2], scale=2)]
@@ -118,8 +137,19 @@ def _options(img: MatLike) -> list[ActionOption]:
         compact = text.replace(" ", "")
         if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
             compact = re.sub(r"V0(?=\.?(?:公開)?レッスン)", "Vo", compact)
+        match_text = compact
+        lesson_hint = "公開レ" in compact or "レッスン" in compact
+        known_lesson_attr = any((found := pattern.search(compact)) and found.groups() and found.group(1)
+                                for pattern, kind in ACTIONS if kind in ("open_lesson", "lesson"))
+        if (os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" and lesson_hint
+                and not known_lesson_attr):
+            attr = _lesson_prefix_attr(img, b)
+            # Japanese OCR may also drop the last ン. Only independently read
+            # Latin letters establish the attribute; keep unknown lessons present
+            # so incomplete OCR cannot silently reduce the available choices.
+            match_text = (attr or "") + ("公開レッスン" if "公開" in compact else "レッスン")
         for pattern, kind in ACTIONS:
-            m = pattern.search(compact)
+            m = pattern.search(match_text)
             if not m:
                 continue
             cx, ty = (b[0] + b[2]) // 2, (b[1] + b[3]) // 2

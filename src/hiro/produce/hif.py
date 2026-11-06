@@ -193,7 +193,9 @@ class HiroHifStrategy(HifGrindStrategy):
             current = self.s.observe_complete("ACTION_SELECT", required)
             missing = [k for k in required if current.fields.get(k) is None]
             if require_day and (missing or current.fields.get("complete") is False):
-                self._stop("ACTION_SELECT", f"当前帧行动状态不完整（缺 {missing}），不使用旧状态选行动", obs=current)
+                unknown_attrs = [o.get("option") for o in current.fields.get("options") or []
+                                 if o.get("option") in ("training", "class", "lesson") and not o.get("attr")]
+                self._stop("ACTION_SELECT", f"当前帧行动状态不完整（缺字段 {missing}，课程属性未知 {unknown_attrs}），不使用旧状态选行动", obs=current)
             return current
 
         obs = observe_action()

@@ -148,6 +148,9 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
     if page == "STUDY":
         return _study(decider, state, identity)
     if page == "SKILL_CARD_ENHANCE":
+        from hiro.brain.mechanism_enhance import applicable, compare
+        if applicable(state):
+            return compare(decider, state, identity)
         return _enhance(state, identity)
     if page == "SELECT_DRINK":
         from hiro.brain.route_drink_selection import choose, enabled

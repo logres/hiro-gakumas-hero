@@ -11,6 +11,7 @@
 文字（按钮、天数、建议）用 Apple Vision 整屏识别一次；数字按区域单独读。
 """
 
+import os
 import re
 from dataclasses import asdict, dataclass, field
 
@@ -179,11 +180,14 @@ def read_action_select(img: MatLike) -> ActionSelectState:
     exam = re.search(r"(\S+?)まで", header)
     days = re.search(r"(\d+)\s*日", header)
     stamina = read_stamina(img)
-    points = re.search(r"\d+", "".join(t for t, _ in ocr(img[slice(*POINTS_BOX[1::2]), slice(*POINTS_BOX[::2])], scale=4, languages=("en-US",))))
+    # RapidOCR at 4x fragments these small HUD strings and drops digits / decimal
+    # points (260 → 26, 55.8% → 558%). Native-size crops preserve the full text.
+    numeric_scale = 1 if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" else 4
+    points = re.search(r"\d+", "".join(t for t, _ in ocr(img[slice(*POINTS_BOX[1::2]), slice(*POINTS_BOX[::2])], scale=numeric_scale, languages=("en-US",))))
 
     def small_text(box) -> str:
         x1, y1, x2, y2 = box
-        return "".join(t for t, _ in ocr(img[y1:y2, x1:x2], scale=4, languages=("en-US",)))
+        return "".join(t for t, _ in ocr(img[y1:y2, x1:x2], scale=numeric_scale, languages=("en-US",)))
 
     caps, growth = {}, {}
     for a in ATTRS:

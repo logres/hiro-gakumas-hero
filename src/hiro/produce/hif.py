@@ -10,6 +10,7 @@
   这里只做 observe → decide → 把契约 Action 翻译成 KAA 上下文的操作 → verify。
 """
 
+import os
 import time
 from pathlib import Path
 from dataclasses import replace
@@ -136,7 +137,8 @@ class HiroHifStrategy(HifGrindStrategy):
         self.brain = BattleBrain(self.profile, llm)
         # 特別指導：执行器有了（游戏执行-04），但定制页 cards 识别还没有，进去也只能直接结束 → 暂不进候选（选行动按候选顺序兜底）
         self.deciders = ProduceDeciders(self.profile, llm, main_attr=self.main_attr, unavailable_options=self.UNAVAILABLE_OPTIONS,
-                                          change_controlled=True)  # 决策会话的培育决策器；换卡已由 on_skill_card_change 按决策执行（GameState → Decision）
+                                          change_controlled=True,
+                                          idol_card_id=solution.idol if os.environ.get("HIRO_EXPLICIT_IDOL_STATE") == "1" else None)
         # 续跑：从同一局之前的 trace 段（<基名>、<基名>-rN）恢复本局已拿到的卡，决策器据此判断必拿卡是否已齐（牌组识别接入前的兜底）
         from hiro.kaa_env import MEMORY_CARDS
 

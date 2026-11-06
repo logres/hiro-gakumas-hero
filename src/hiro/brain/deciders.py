@@ -69,11 +69,14 @@ def action_key(a: Action) -> str:
 
 class ProduceDeciders:
     def __init__(self, profile: IdolProfile | None, llm: LLMAdapter | None = None, *, main_attr: str | None = None,
-                 unavailable_options: set[str] | frozenset = frozenset(), change_controlled: bool = False):  # fmt: skip
+                 unavailable_options: set[str] | frozenset = frozenset(), change_controlled: bool = False,
+                 idol_card_id: str | None = None):  # fmt: skip
         """main_attr：运行级指定的主属性（Vo/Da/Vi，例如 run_hif --main-attr Da）；识别读出支援卡编成后可不传。
         unavailable_options：执行器还做不了的选行动选项（例如 special_guidance），决策时排除，
         避免选了执行不了、被 KAA 默认退回休息（2026-10-31 第 3 局第 19 天）。"""
         self.profile = profile
+        # Identity is known from the selected solution even without an idol-specific playbook.
+        self.idol_card_id = idol_card_id.replace("i_card-skin-", "i_card-") if idol_card_id else None
         self.llm = llm
         self.main_attr = main_attr
         self.unavailable_options = frozenset(unavailable_options)
@@ -187,8 +190,10 @@ class ProduceDeciders:
 
     def produce_state(self, state: GameState) -> ProduceState | None:
         produce = dict(state.produce or {})
-        if self.profile and not produce.get("idol_card_id"):
-            produce["idol_card_id"] = self.profile.idol_id
+        if not produce.get("idol_card_id"):
+            identity = self.idol_card_id or (self.profile.idol_id if self.profile else None)
+            if identity:
+                produce["idol_card_id"] = identity
         if self.main_attr and not produce.get("main_attr"):
             produce["main_attr"] = self.main_attr
         return replace(state, produce=produce).produce_state()

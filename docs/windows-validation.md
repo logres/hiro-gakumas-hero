@@ -163,10 +163,33 @@ heading and a `閉じる` button, neither present in this UI. Its reported failu
 was a verifier false negative, not evidence of failed SendInput injection.
 
 The check now requires four spatially separated menu anchors and one
-high-confidence X within the observed bottom-right region, then checks the
+X (score >= .65) within the observed bottom-right region, then checks the
 fresh X crop before closing. `--close-existing` permits a single bounded close
 of the menu left open by the previous test. Regression checks cover this actual
 OCR layout, missing/ambiguous/low-confidence/wrong-position close controls.
-Focused Windows input/device/menu tests: 20 passed. Actual close verification
-remains pending; opening alone does not establish a complete game run.
+The four menu anchors still require score >= .8. A second real frame scored
+the X at .729; the regression includes this translucent-background variation.
+
+The subsequent elevated run passed: close the existing menu, open the menu
+again, close it, and confirm the selected home tab. All three recorded actual
+cursor coordinates equaled their requested screen coordinates; target was
+foreground. The bounded runner exited 0 and the final screenshot was visually
+verified at home. No produce, rewards, purchases, or other menu items were used.
+
+Foreground activation now temporarily attaches the caller's input queue to the
+foreground thread only if direct SetForegroundWindow fails, always detaching
+afterward. It does not elevate or cross desktops. Tests cover success and
+failure cleanup. Microsoft API reference:
+https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput
+
+The standard Start-Process -Verb RunAs path successfully launched the limited
+PowerShell test from Codex after user UAC consent. This proves that path for
+this test, not that the built-in Computer Use helper is elevated or that all
+MSIX virtualization has disappeared. The reusable entry is
+`scripts/verify-windows-menu.ps1 -Elevate`; without elevation, its actual test
+stopped before input on the 8192/12288 integrity mismatch as intended.
+
+Full regression after these fixes: 436 passed, 530 skipped, 27 warnings
+(25.91 seconds). Skipped fixtures, full H.I.F play, background input, and
+cross-monitor DPI behavior remain outside this real menu verification.
 

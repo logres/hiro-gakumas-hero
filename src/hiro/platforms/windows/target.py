@@ -41,8 +41,26 @@ def activate(window):
     if win32gui.GetForegroundWindow() != hwnd:
         try:
             win32gui.SetForegroundWindow(hwnd)
-        except win32gui.error as exc:
-            raise RuntimeError("Windows refused to activate the selected window") from exc
+        except win32gui.error:
+            # The foreground input queue may belong to another application.
+            # Share it only for activation, then always detach. This neither
+            # elevates the process nor allows cross-desktop input.
+            import win32api
+            import win32process
+            current = win32api.GetCurrentThreadId()
+            foreground = win32gui.GetForegroundWindow()
+            thread, _ = win32process.GetWindowThreadProcessId(foreground)
+            attached = False
+            try:
+                if thread and thread != current:
+                    win32process.AttachThreadInput(current, thread, True)
+                    attached = True
+                win32gui.SetForegroundWindow(hwnd)
+            except win32gui.error as exc:
+                raise RuntimeError("Windows refused to activate the selected window") from exc
+            finally:
+                if attached:
+                    win32process.AttachThreadInput(current, thread, False)
     deadline = time.monotonic() + 0.5
     while win32gui.GetForegroundWindow() != hwnd:
         if time.monotonic() >= deadline:

@@ -16,6 +16,7 @@ def test_real_menu_without_heading_or_close_text():
              ('設定', .99, [584,926,629,952]),
              ('×', .91, [592,1182,677,1250])]
     assert module.menu_close_box(boxes) == boxes[-1][2]
+    assert module.menu_close_box(boxes[:-1] + [('×', .7294, [596,1184,676,1247])]) == [596,1184,676,1247]
     assert module.menu_close_box(boxes[:-1]) is None
     assert module.menu_close_box(boxes[1:]) is None
     assert module.menu_close_box(boxes + [boxes[-1]]) is None

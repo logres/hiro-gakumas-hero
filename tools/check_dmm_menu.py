@@ -17,16 +17,16 @@ def menu_close_box(boxes):
     found = set()
     close = []
     for text, score, box in boxes:
-        if score < .8:
-            continue
         text = text.replace(' ', '')
         x1, y1, x2, y2 = box
         cx, cy = (x1+x2)/2, (y1+y2)/2
-        if text in anchors:
+        if text in anchors and score >= .8:
             ax, ay = anchors[text]
             if abs(cx-ax) <= 70 and abs(cy-ay) <= 45:
                 found.add(text)
-        if (text in ('×', '✕', '✖') and 580 <= x1 < x2 <= 700
+        # The translucent X scored .729 on a second real frame; four strong
+        # spatial menu anchors remain mandatory independently of this glyph.
+        if (score >= .65 and text in ('×', '✕', '✖') and 580 <= x1 < x2 <= 700
                 and 1160 <= y1 < y2 <= 1270
                 and 20 <= x2-x1 <= 120 and 20 <= y2-y1 <= 110):
             close.append(box)

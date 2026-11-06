@@ -28,9 +28,9 @@ pwsh -NoProfile -File scripts/setup-windows.ps1 -Regen
 $env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.device'
 $env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
 $env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'
-# 实验选项：将移动、按下、抬起放入一个 SendInput 批次（尚待 DMM 实测）。
+# 将移动、按下、抬起放入一个 SendInput 批次，已通过 DMM 菜单开关实测。
 # 不设置时仍使用原 windows_native 输入。
-# $env:HIRO_WINDOWS_MODE = 'windows_sendinput'
+$env:HIRO_WINDOWS_MODE = 'windows_sendinput'
 ```
 
 设备 provider 是显式前台实现：截图会尝试激活选中的窗口，输入会移动真实鼠标。设置环境变量本身不会启动游戏或发送输入；调用设备连接和控制入口时才会使用这些能力。不要据此推断后台挂机可用。
@@ -38,6 +38,18 @@ $env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'
 OCR 使用已安装资源中的日文/英文模型，详细实测与限制见 [Windows 验证记录](windows-validation.md)。Windows 窗口 provider 用 KAA 模板确认带跳过按钮的 LIVE，不执行 Mac 全屏补救。尚不覆盖隐藏控件、演出开始页和横屏弹窗；未知横屏会停下等待人工处理。完整 play 流程尚未完成验收。
 
 ## 数据与验收
+
+2026-11-06 已通过实际 DMM 首页菜单打开、关闭及回到首页验证。可用限定入口复测：
+
+```powershell
+pwsh -NoProfile -File scripts/verify-windows-menu.ps1 -Elevate
+```
+
+`-Elevate` 显式请求 Windows 标准 UAC，适用于游戏已在管理员权限运行的情况；
+确认后空出鼠标，脚本自行记录结果到 `reports/windows-probe/menu-verification.log`。
+不传该参数时不提权；权限不足会在输入前停止。该入口最多打开、关闭菜单各一次，
+不会进行培育、奖励领取或购买。菜单必须已在首页；若上次失败留下菜单，可用
+`-CloseExisting` 只识别并关闭它。完整游玩和后台输入仍未验收。
 
 游戏启动后，可先单独核查 Hiro 的实际截图与 OCR，不发送点击：
 

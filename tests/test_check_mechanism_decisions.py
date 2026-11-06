@@ -129,6 +129,16 @@ def test_guarded_model_attempt_remains_visible_as_pipeline_result(monkeypatch):
     assert report["cases"][1]["model_assisted_pipeline_checks"] is None
 
 
+def test_source_changes_do_not_replace_starting_versions(monkeypatch):
+    versions = iter([{"git_head": "before", "sha256_by_file": {}},
+                     {"git_head": "after", "sha256_by_file": {}}])
+    monkeypatch.setattr(check.replay, "_versions", lambda: next(versions))
+    report = check.run(master=Master())
+    assert report["versions"]["git_head"] == "before"
+    assert report["versions_end"]["git_head"] == "after"
+    assert report["sources_changed_during_run"] is True
+
+
 def test_cli_output_and_exact_case_filter_without_model(tmp_path, monkeypatch):
     master = Master()
     selected = check.build_cases(master)[0]["id"]

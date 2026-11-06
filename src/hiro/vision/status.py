@@ -279,6 +279,9 @@ def _verified_status_number(img: MatLike, k: int) -> int | None:
     cy = _slot_y(k)
     x1, y1, x2, y2 = SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32
     padded = read_dddd(img, (x1 - 2, y1 - 2, x2 + 2, y2 + 2))
+    glyph = _font_digits_without_ring(img,k)
+    if padded is not None and glyph == padded:
+        return padded  # Independent complete glyphs and a separate OCR engine.
     for crop in (img[y1:y2, x1:x2], img[cy - 2:cy + 34, SLOT_X + 14:SLOT_X + 130]):
         lines = ocr(crop, scale=1.0)
         if len(lines) != 1:
@@ -291,7 +294,7 @@ def _verified_status_number(img: MatLike, k: int) -> int | None:
                 return native
             # ddddocr may incorporate the percent glyph as a final 9. Require
             # a literal observed percent AND independent exact digit glyphs.
-            if text.strip().endswith(("%", "％")) and _font_digits_without_ring(img,k) == native:
+            if text.strip().endswith(("%", "％")) and glyph == native:
                 return native
     return None
 

@@ -159,6 +159,8 @@ def run(*, adapter=None, max_model_calls=8, case_ids=None, master=None):
         if unknown:
             raise ValueError(f"unknown cases: {sorted(unknown)}")
         cases = [case for case in cases if case["id"] in case_ids]
+    versions = replay._versions()
+    versions["sha256_by_file"]["tools/check_mechanism_decisions.py"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     capped = replay.CappedAdapter(from_spec(adapter), max_model_calls) if adapter else None
     results = []
     for case in cases:
@@ -185,11 +187,12 @@ def run(*, adapter=None, max_model_calls=8, case_ids=None, master=None):
                         "model_checks": judge(model, case) if measured else None,
                         "model_assisted_pipeline_checks": judge(model, case) if model is not None and used else None,
                         "model_call_evidence": copy.deepcopy(model.get("llm") or []) if model is not None and used else []})
-    versions = replay._versions()
-    versions["sha256_by_file"]["tools/check_mechanism_decisions.py"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    versions_end = replay._versions()
+    versions_end["sha256_by_file"]["tools/check_mechanism_decisions.py"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     return {"scope": "显式假设的真实主数据机制验收；不是录制实机，不证明完整考试表现或自动学习。",
             "adapter": adapter, "global_max_model_calls": max_model_calls,
             "global_model_calls_used": capped.used if capped else 0, "versions": versions,
+            "versions_end": versions_end, "sources_changed_during_run": versions != versions_end,
             "case_count": len(results), "model_measured_count": sum(r["model_quality_status"] == "measured" for r in results),
             "model_attempted_guarded_count": sum(r["model_quality_status"] == "model_attempted_guarded" for r in results),
             "cases": results}

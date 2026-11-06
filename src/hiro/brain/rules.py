@@ -275,13 +275,22 @@ def fallback(state: BattleState) -> Decision:
         return s - 0.2 * (c.cost + 2 * c.hp_cost)
 
     best = max(cands, key=score)
-    d = Decision(f"play:{best.slot}", "兜底启发式", "fallback")
+    from hiro.brain import fallback_effect_scoring
+    effect_scoring=fallback_effect_scoring.enabled()
+    audit=None
+    if effect_scoring:
+        best,audit=fallback_effect_scoring.choose(state,cands,{c.slot:score(c) for c in cands})
+    why=fallback_effect_scoring.reason(state,cands,cash,best,audit) if effect_scoring else "兜底启发式"
+    d = Decision(f"play:{best.slot}", why, "fallback")
     if violations(state, d):
         others = [c for c in cands if c is not best and not c.tags.clears_genki]
         if not others:
             return Decision("skip", "兜底：唯一可打的是会清空元气的终结牌", "fallback")
         best = max(others, key=score)
-        d = Decision(f"play:{best.slot}", "兜底启发式（避开终结牌）", "fallback")
+        if effect_scoring:
+            best,audit=fallback_effect_scoring.choose(state,others,{c.slot:score(c) for c in others})
+        why=fallback_effect_scoring.reason(state,others,cash,best,audit) if effect_scoring else "兜底启发式（避开终结牌）"
+        d = Decision(f"play:{best.slot}", why, "fallback")
     return d
 
 

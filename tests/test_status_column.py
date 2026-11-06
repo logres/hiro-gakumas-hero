@@ -320,3 +320,26 @@ def test_local_r26_color_branch_keeps_permanent_card(monkeypatch):
         assert rows[2]["card_id"]=="p_card-02-ido-3_019"
         assert rows[2]["name"]=="もう怖くないから"
         assert rows[2]["score"]>=.8
+
+
+@pytest.mark.parametrize("glyph,padded,expected",[(166,166,166),(166,16,None),(None,166,None)])
+def test_complete_glyph_and_independent_ocr_recover_when_native_text_is_corrupted(monkeypatch,glyph,padded,expected):
+    monkeypatch.setattr(status,"_font_digits_without_ring",lambda *_:glyph)
+    monkeypatch.setattr(status,"read_dddd",lambda *_:padded)
+    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[("øó",.5)])
+    assert status._verified_status_number(np.zeros((1280,720,3),np.uint8),0)==expected
+
+
+def test_local_r27_failed_restore_frames_have_recoverable_exact_state(monkeypatch):
+    base=Path(__file__).resolve().parents[1]/"reports/runs/20261107-074410/frames"
+    if not base.exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    for seq in (27,33):
+        rows=status.read_status_column(cv2.imread(str(base/f"{seq:05d}-exam_card_detail_state_changed.png")),cache=None)
+        values=observed(rows)
+        assert values["impression"]==166
+        assert status.status_summary(rows)["examlessonvaluemultiple"]==20
+        assert values["buffs"]=={"もう怖くないから":None,"虹色ドリーマー":None,
+                                "輝くキミへ":None,"パラメータ上昇量増加":20,"ファンシーチャーム":None}

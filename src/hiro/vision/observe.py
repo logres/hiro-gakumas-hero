@@ -189,6 +189,7 @@ def statuses_observation(entries: list[dict] | None) -> list[dict]:
 
 def _hif_exam_observation(fields: dict) -> dict:
     obs = _jsonable_battle(battle_observation(fields))
+    obs["exam_label"] = fields.get("exam_label")
     for k in ("deck_count", "pitem_charges", "rank_line", "participants", "pitems", "unrecognized_cards", "npc_scores", "my_rank_index",
               "drink_slots", "finals", "finals_round"):
         obs[k] = fields.get(k)

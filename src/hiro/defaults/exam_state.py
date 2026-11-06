@@ -87,6 +87,7 @@ class ScreenExamStateSource:
         self.profile = None
         self.target_score: int | None = None
         self.session = None
+        self.exam_label: str | None = None
         self.last_raw: dict | None = None
 
     def begin(self, context: dict[str, Any]) -> None:
@@ -95,15 +96,17 @@ class ScreenExamStateSource:
         self.profile = ctx.get("profile")
         self.target_score = ctx.get("target_score")
         self.session = ctx.get("session")
+        self.exam_label = ctx.get("exam")
 
     def read(self, frame: Any, memory: Any) -> tuple[Any | None, str]:
         raw = getattr(frame, "raw", None) or read_screen(frame.img)
         self.last_raw = raw
         if isinstance(raw, dict) and raw.get("hand_layout") in OVERLAY_LAYOUTS:
             return None, "hand_overlay"
-        fields = screen_fields(raw, self.session, img=getattr(frame, "img", None))
-        conflicts = self.session.state.conflicts if self.session is not None else None
-        state = screen_state(memory, self.profile, fields, frame, target_score=self.target_score, conflicts=conflicts)
+        observed = {**raw, "exam_label": self.exam_label} if self.exam_label else raw
+        fields = screen_fields(observed, self.session, img=getattr(frame, "img", None))
+        diagnostics = self.session.notes if self.session is not None else None
+        state = screen_state(memory, self.profile, fields, frame, target_score=self.target_score, conflicts=diagnostics)
         return state, "screen"
 
     def confidence(self) -> str:

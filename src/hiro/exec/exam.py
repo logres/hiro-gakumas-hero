@@ -1031,6 +1031,11 @@ def _detail_state_facts(img):
     if any(facts.get(k) is None for k in ("remaining_turns", "hp", "genki")):
         return None
     facts.update({k: raw.get(k) for k in ("attr", "multiplier_pct", "pitem_charges")})
+    # A missing multiplier can become readable after closing the detail list.
+    # Do not open from that incomplete baseline and then mistake the new
+    # observation for a game-state change. Item charges may genuinely be hidden.
+    if facts["attr"] not in ("vocal", "dance", "visual") or facts["multiplier_pct"] is None:
+        return None
     return facts
 
 
@@ -1060,7 +1065,7 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
     facts = _detail_state_facts(frame.img)
     if facts is None:
         rec.log("exam_card_details_unavailable", reason="initial_state_unverified")
-        return True
+        return False  # Reobserve before any UI input or evidence-free decision.
     def same_state(image):
         current = _detail_state_facts(image)
         if current != facts:

@@ -112,8 +112,21 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
             if not current.get("active") or not current.get("layout_complete") or current.get("hand_count") != len(hand):
                 raise ValueError("hand_layout_changed")
             matches = [c for c in cells if _identity(c) == key]
+            base_candidate = False
+            if (not matches and all(k[0] for k in keys)
+                    and all(c.get("card_id") for c in cells)
+                    and sum(k[0] == key[0] for k in keys) == 1):
+                # Inspect only: persistent thumbnail upgrades can differ from
+                # the effective hand grade. The detail TITLE must still prove
+                # the exact effective grade before any evidence is retained.
+                matches = [c for c in cells if c.get("card_id") == key[0]]
+                base_candidate = len(matches) == 1
             if len(matches) != 1 or not matches[0].get("center"):
-                raise ValueError("hand_identity_not_unique")
+                # A different effective upgrade or duplicate list copy cannot
+                # identify this slot. Other independently verified cards remain
+                # useful, provided the complete exam state is later restored.
+                problems.append("hand_identity_not_unique")
+                continue
             cell = matches[0]
             click(tuple(cell["center"]))
             verified = None
@@ -122,14 +135,22 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                 image = shoot()
                 detail = read_details(image)
                 selected = [c for c in detail.get("cards", []) if c.get("index") == detail.get("selected")]
-                if (detail.get("active") and detail.get("layout_complete") and detail.get("agree") is True
-                        and len(selected) == 1 and _identity(selected[0]) == key
-                        and _identity(detail.get("selected_card") or {}) == key
+                exact_selection = (detail.get("agree") is True and len(selected) == 1
+                                   and _identity(selected[0]) == key
+                                   and _identity(detail.get("selected_card") or {}) == key)
+                base_selection = (base_candidate and len(selected) == 1
+                                  and selected[0].get("card_id") == key[0]
+                                  and all(c.get("card_id") for c in detail.get("cards", []))
+                                  and sum(c.get("card_id") == key[0] for c in detail.get("cards", [])) == 1)
+                if (detail.get("active") and detail.get("layout_complete")
+                        and detail.get("hand_count") == len(hand)
+                        and (exact_selection or base_selection)
                         and _identity(detail.get("detail") or {}) == key):
                     verified = detail
                     break
             if verified is None:
-                raise ValueError("selected_detail_identity_mismatch")
+                problems.append("selected_detail_identity_mismatch")
+                continue
             raw = [line["text"] for line in verified.get("detail_lines", [])
                    if isinstance(line.get("text"), str) and line["text"].strip()]
             if not raw:
@@ -139,6 +160,9 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                              "selection_verified": True, "snapshot_sha256": token,
                              "detail_sha256": image_sha256(image), "hash_basis": "pixelbytes",
                              "raw_ocr_lines": raw})
+            if base_candidate:
+                evidence[-1].update(selection_basis="unique_base_id_and_exact_detail_title",
+                                    observed_thumbnail_upgrade=selected[0].get("upgrade"))
             if on_detail is not None:
                 on_detail(image, evidence[-1])
     except Exception as exc:

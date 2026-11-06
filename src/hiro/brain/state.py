@@ -559,6 +559,12 @@ class BattleState:
 
     @classmethod
     def build(cls, memory: ExamMemory, profile: IdolProfile | None, **observed) -> "BattleState":
+        from hiro.brain.route_policy import explicit_route_enabled
+        generic = profile is None and explicit_route_enabled()
+        if generic:
+            # The legacy single badge has no equipment identity. Multiple
+            # items can occupy this column; use spatially bound public context.
+            observed["pitem_charges"] = None
         if observed.get("pitem_charges") is not None:
             # P 道具图标上的剩余次数（截图读数，重启后也可靠）为准，记忆里的计数只在读不到时兜底
             memory.item_charges_left = observed["pitem_charges"]
@@ -597,12 +603,9 @@ class BattleState:
                 observed["final_turn_permil"] = memory.attr_permil.get(idol_trend(profile.idol_id)[1][0])
             except KeyError:
                 pass
-        from hiro.brain.route_policy import explicit_route_enabled
         charges = memory.item_charges_left
-        if profile is None and explicit_route_enabled():
-            # Generic automatic/turn-end triggers are not decremented by the
-            # legacy card-trigger counter. A historical count is not current.
-            charges = observed.get("pitem_charges")
+        if generic:
+            charges = None
         return cls(
             exam=memory.exam,
             turn=memory.turn,

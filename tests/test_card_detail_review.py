@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import pytest
 
 from hiro.exec.card_detail_review import review_exam_hand_details, image_sha256
 
@@ -85,7 +86,7 @@ def test_changed_state_discards_evidence():
 def test_mismatched_detail_closes_without_evidence():
     result, taps, _ = run(mismatch=True)
     assert result.restored and not result.evidence
-    assert taps == [(1, 1), (20, 20), (9, 9)]
+    assert taps == [(1, 1), (20, 20), (10, 10), (9, 9)]
 
 
 def test_duplicate_copies_are_never_assigned_to_slots():
@@ -131,3 +132,123 @@ def test_unresolved_layout_recovers_using_full_reader_on_same_frame():
         if kind == "layout" and index > 0:
             assert calls[index + 1][0] == "full"
             assert calls[index + 1][1] is image
+
+
+@pytest.mark.parametrize("restore", [True, False])
+def test_unmatched_middle_upgrade_preserves_only_other_exact_evidence(restore):
+    current, initial = Image("exam"), Image("exam")
+    taps = []
+    hand = [SimpleNamespace(slot=slot, card_id=key, upgrade=1)
+            for slot, key in enumerate(("a", "b", "c"))]
+    cells = [dict(index=slot, card_id=key, upgrade=0 if key == "b" else 1,
+                  center=(slot + 10, 10)) for slot, key in enumerate(("c", "b", "a"))]
+
+    def click(point):
+        nonlocal current
+        taps.append(point)
+        if point == (1, 1):
+            current = Image("modal")
+        elif point == (9, 9):
+            current = Image("exam" if restore else "changed")
+        else:
+            current = Image(next(c["card_id"] for c in cells if c["center"] == point))
+
+    def read(image):
+        cell = next((c for c in cells if c["card_id"] == image.name), None)
+        identity = {"card_id": image.name, "upgrade": 0 if image.name == "b" else 1}
+        return dict(active=image.name not in ("exam", "changed"), layout_complete=True,
+                    hand_count=3, cards=cells, selected=cell["index"] if cell else None,
+                    selected_card=identity, detail=identity, agree=True,
+                    detail_lines=[{"text": "好印象+1"}])
+
+    result = review_exam_hand_details(initial, hand, shoot=lambda: current, click=click,
+        sleep=lambda _: None, same_state=lambda img: img.name == "exam",
+        read_details=read, find_button=lambda _: (1, 1),
+        close_buttons=lambda _: [(9, 9)], max_polls=2)
+    assert taps == [(1, 1), (12, 10), (11, 10), (10, 10), (9, 9)]
+    assert "selected_detail_identity_mismatch" in result.problems
+    assert result.restored is restore
+    if restore:
+        assert [(e["slot"], e["card_id"], e["upgrade"]) for e in result.evidence] == [(0, "a", 1), (2, "c", 1)]
+        assert all(e["snapshot_sha256"] == image_sha256(initial) for e in result.evidence)
+    else:
+        assert result.evidence == []
+
+
+@pytest.mark.parametrize("title_grade,accepted", [(3, True), (1, False)])
+def test_base_id_inspection_requires_exact_effective_title_grade(title_grade, accepted):
+    current = Image("exam")
+    initial = current
+    taps = []
+    hand = [SimpleNamespace(slot=2, card_id="card", upgrade=3)]
+    cell = dict(index=0, card_id="card", upgrade=1, center=(10, 10))
+
+    def click(point):
+        nonlocal current
+        taps.append(point)
+        current = Image({(1,1): "modal", (10,10): "selected", (9,9): "exam"}[point])
+
+    def read(image):
+        return dict(active=image.name != "exam", layout_complete=True, hand_count=1,
+                    cards=[cell], selected=0 if image.name == "selected" else None,
+                    selected_card=None, detail={"card_id": "card", "upgrade": title_grade},
+                    agree=False, detail_lines=[{"text": "actual effect"}])
+
+    result = review_exam_hand_details(initial, hand, shoot=lambda: current, click=click,
+        sleep=lambda _: None, same_state=lambda image: image.name == "exam",
+        read_details=read, find_button=lambda _: (1,1), close_buttons=lambda _: [(9,9)], max_polls=2)
+    assert result.restored
+    assert taps == [(1,1), (10,10), (9,9)]
+    assert bool(result.evidence) is accepted
+    if accepted:
+        assert result.evidence[0]["upgrade"] == 3
+        assert result.evidence[0]["selected_card"] == {"slot": 2, "card_id": "card", "upgrade": 3}
+        assert result.evidence[0]["observed_thumbnail_upgrade"] == 1
+
+
+@pytest.mark.parametrize("duplicate_in", ["hand", "list"])
+def test_base_id_fallback_forbidden_for_ambiguous_copies(duplicate_in):
+    image = Image("exam")
+    hand = [SimpleNamespace(slot=i, card_id="same" if duplicate_in == "hand" or i == 0 else "other",
+                            upgrade=i+2) for i in range(2)]
+    taps = []
+    current = image
+    cell = dict(index=0, card_id="same", upgrade=1, center=(10,10))
+    def click(point):
+        nonlocal current
+        taps.append(point)
+        current = Image("modal" if point == (1,1) else "exam")
+    result = review_exam_hand_details(image, hand, shoot=lambda: current, click=click,
+        sleep=lambda _: None, same_state=lambda img: img.name == "exam",
+        read_details=lambda img: dict(active=img.name == "modal", layout_complete=True,
+                                     hand_count=2, cards=[cell, dict(cell,index=1,
+                                         card_id="other" if duplicate_in == "hand" else "same")]),
+        find_button=lambda _: (1,1), close_buttons=lambda _: [(9,9)], max_polls=1)
+    assert result.restored and not result.evidence
+    assert taps == [(1,1), (9,9)]
+
+
+@pytest.mark.parametrize("unknown_at", ["hand", "before_click", "after_click"])
+def test_base_id_fallback_requires_all_known_base_ids(unknown_at):
+    current = Image("exam")
+    taps = []
+    hand = [SimpleNamespace(slot=0, card_id="target", upgrade=3),
+            SimpleNamespace(slot=1, card_id=None if unknown_at == "hand" else "other", upgrade=1)]
+    def click(point):
+        nonlocal current
+        taps.append(point)
+        current = Image({(1,1): "modal", (10,10): "selected", (9,9): "exam"}[point])
+    def read(image):
+        unknown = (unknown_at == "before_click" or
+                   (unknown_at == "after_click" and image.name == "selected"))
+        cells = [dict(index=0, card_id="target", upgrade=1, center=(10,10)),
+                 dict(index=1, card_id=None if unknown else "unmatched", upgrade=0, center=(20,10))]
+        return dict(active=image.name != "exam", layout_complete=True, hand_count=2,
+                    cards=cells, selected=0 if image.name == "selected" else None,
+                    selected_card=None, detail={"card_id":"target", "upgrade":3}, agree=False,
+                    detail_lines=[{"text":"effect"}])
+    result = review_exam_hand_details(current, hand, shoot=lambda: current, click=click,
+        sleep=lambda _: None, same_state=lambda img: img.name == "exam", read_details=read,
+        find_button=lambda _: (1,1), close_buttons=lambda _: [(9,9)], max_polls=1)
+    assert result.restored and not result.evidence
+    assert taps == ([(1,1), (10,10), (9,9)] if unknown_at == "after_click" else [(1,1), (9,9)])

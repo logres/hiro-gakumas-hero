@@ -63,6 +63,9 @@ def verified_exam_context(idol_card_id: str | None, observed_pitems: list | None
         if not isinstance(observed, dict):
             continue
         fact = {"slot": observed.get("slot"), "variant_status": "unknown"}
+        for key in ("rect", "charges_box", "remaining_charges", "charges_source"):
+            if key in observed:
+                fact[key] = observed[key]
         item_id = observed.get("item_id") or observed.get("id")
         if item_id:
             fact["observed_item_id"] = item_id

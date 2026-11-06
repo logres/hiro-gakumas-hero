@@ -207,7 +207,7 @@ ATTR_TAILS = {"カル": "vocal", "ンス": "dance", "ュアル": "visual"}  # �
 
 def _parse_attr(joined: str) -> dict:
     attr = next((v for k, v in ATTRS.items() if k in joined), None) or next((v for k, v in ATTR_TAILS.items() if k in joined), None)
-    m = re.search(r"(\d+)\s*%", joined)
+    m = re.search(r"(\d+)\s*[%％]", joined)
     return {"attr": attr, "multiplier_pct": int(m.group(1)) if m else None}
 
 

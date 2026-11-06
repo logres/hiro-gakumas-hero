@@ -215,35 +215,49 @@ def read_drinks(img: MatLike, *, cache: RegionCache | None = None) -> list[dict 
 def read_pitems(img: MatLike, *, cache: RegionCache | None = None) -> list[dict]:
     """P 道具列（牌库图标下方，向下排列）。cache：整列与上次相同则复用。"""
     x0, y0 = PITEM_TOP_LEFT
-    top = y0 - PITEM_PITCH - 4 if os.environ.get("HIRO_PITEM_COMPACT_HUD") == "1" else y0
-    region = img[top : y0 + PITEM_PITCH * (PITEM_MAX - 1) + PITEM_SIZE + 12, x0 : x0 + PITEM_SIZE]
+    compact = os.environ.get("HIRO_PITEM_COMPACT_HUD") == "1"
+    top = y0 - PITEM_PITCH - 19 if compact else y0
+    right = min(img.shape[1], x0 + PITEM_SIZE + 15) if compact else x0 + PITEM_SIZE
+    region = img[top : y0 + PITEM_PITCH * (PITEM_MAX - 1) + PITEM_SIZE + 12, x0:right]
     return cached(cache, "pitems", region, lambda: _read_pitems(img))
 
 
 def _read_pitems(img: MatLike) -> list[dict]:
-    old = _read_pitems_at(img, PITEM_TOP_LEFT[1], PITEM_MAX, (0,))
     if os.environ.get("HIRO_PITEM_COMPACT_HUD") != "1":
-        return old
-    # Evaluate an additional layout using the same strict template thresholds.
-    # Only its first row is supported by observed frames. Never merge layouts:
-    # overlapping coordinates would otherwise duplicate a single physical icon.
-    compact = _read_pitems_at(img, PITEM_TOP_LEFT[1] - PITEM_PITCH, 1, range(-4, 5))
-    return max((old, compact), key=lambda result: result[0]["score"] if result else -1)
+        return _read_pitems_at(img, PITEM_TOP_LEFT[1], PITEM_MAX, (0,))
+    # A verified upper icon anchors the whole compact column. The legacy origin
+    # is its second row, so comparing first-row scores can mislabel a subset.
+    compact = _read_pitems_at(img, PITEM_TOP_LEFT[1] - PITEM_PITCH,
+                             PITEM_MAX, range(-4, 5), evidence=True)
+    return compact or _read_pitems_at(img, PITEM_TOP_LEFT[1], PITEM_MAX, (0,), evidence=True)
 
 
-def _read_pitems_at(img: MatLike, y0: int, count: int, first_offsets) -> list[dict]:
+def _read_pitems_at(img: MatLike, y0: int, count: int, first_offsets, *, evidence=False) -> list[dict]:
     lib = _library("pitem", PITEM_SIZE)
     x0 = PITEM_TOP_LEFT[0]
     out = []
     for k in range(count):
-        crops = [c for dy in (first_offsets if k == 0 else range(-12, 13, 4)) if (c := _crop(img, x0, y0 + PITEM_PITCH * k + dy, PITEM_SIZE)) is not None]
-        best = max(lib.match_many(crops), key=lambda top: top[0][0]) if crops else None
+        candidates = [(y0 + PITEM_PITCH * k + dy, c)
+                      for dy in (first_offsets if k == 0 else range(-12, 13, 4))
+                      if (c := _crop(img, x0, y0 + PITEM_PITCH * k + dy, PITEM_SIZE)) is not None]
+        matches = lib.match_many([c for _, c in candidates])
+        best_index = max(range(len(matches)), key=lambda i: matches[i][0][0]) if matches else None
+        best = matches[best_index] if best_index is not None else None
         if best is None or best[0][0] < MIN_SCORE or best[0][0] - best[1][0] < MIN_MARGIN:
             break
         (score, asset), (second, _) = best
-        out.append({"slot": k, "asset": asset, "name": lib.names.get(asset), "score": round(score, 3), "margin": round(score - second, 3)})
-    return out
+        entry = {"slot": k, "asset": asset, "name": lib.names.get(asset),
+                 "score": round(score, 3), "margin": round(score - second, 3)}
+        if evidence:
+            from hiro.vision.digits import read_number
 
+            y = candidates[best_index][0]
+            # Badge belongs to this physical row, regardless of icon identity.
+            badge = (x0 + 49, y - 15, min(img.shape[1], x0 + 81), y + 13)
+            entry.update(rect=[x0, y, PITEM_SIZE, PITEM_SIZE], charges_box=list(badge),
+                         remaining_charges=read_number(img, badge), charges_source="visible_badge")
+        out.append(entry)
+    return out
 
 # ---------------------------------------------------------------- 饮料溢出页（PDRINK_MAX）
 # H.I.F 实机（第四局 r4）：「Pドリンク所持上限」弹窗，上面「受け取ったドリンク」是新饮料，下面「手持ちのドリンク」是已有饮料；
@@ -391,4 +405,3 @@ def read_pdrink_max(img: MatLike) -> dict | None:
     m = re.search(r"あと(\d+)", left or "")
     return {"held": held, "incoming": incomings[-1] if incomings else None, "incomings": incomings, "select_left": int(m.group(1)) if m else None,
             "complete": complete}  # fmt: skip
-

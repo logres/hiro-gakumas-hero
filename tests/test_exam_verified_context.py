@@ -132,3 +132,12 @@ def test_profile_does_not_hide_current_equipment_evidence(master, monkeypatch, i
         assert "好印象+1" in facts["observed_pitems"][0]["effect_text"]
     else:
         assert "effect_text" not in facts["observed_pitems"][0]
+
+def test_visible_count_preserved_without_resolving_shared_icon_variant(master):
+    observed = {"slot":1,"asset":"shared-icon","rect":[634,313,66,66],
+                "charges_box":[683,298,715,326],"remaining_charges":2,"charges_source":"visible_badge"}
+    result=exam_context.verified_exam_context(None,[observed])["observed_pitems"][0]
+    assert result["remaining_charges"] == 2
+    assert result["charges_box"] == observed["charges_box"]
+    assert result["variant_status"] == "unknown"
+    assert len(result["candidate_variants"]) == 2

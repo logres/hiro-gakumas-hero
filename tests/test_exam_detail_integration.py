@@ -42,6 +42,30 @@ def test_detail_inspection_disabled_by_default(monkeypatch):
     assert exam._review_current_card_details(None, None, None) is True
 
 
+def test_incomplete_baseline_reobserves_without_opening_or_deciding(monkeypatch):
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
+    state = SimpleNamespace(hand=[], public_info="catalog", legal_actions=lambda: ["drink:0", "skip"])
+    events = []
+    rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _: None)
+    monkeypatch.setattr(review, "review_exam_hand_details", lambda *a, **kw: pytest.fail("must not open details"))
+    assert exam._review_current_card_details(state, SimpleNamespace(img=object()), rec) is False
+    assert state.public_info == "catalog"
+    assert events[-1][1]["reason"] == "initial_state_unverified"
+
+
+@pytest.mark.parametrize("attr,multiplier,complete", [("visual", None, False), (None, 2868, False), ("visual", 2868, True)])
+def test_detail_baseline_requires_current_attribute_and_multiplier(monkeypatch, attr, multiplier, complete):
+    from hiro.vision import hif, observe
+    monkeypatch.setattr(hif, "is_hif_exam", lambda _: True)
+    monkeypatch.setattr(hif, "read_hif_exam", lambda *a, **kw: {"attr": attr, "multiplier_pct": multiplier})
+    monkeypatch.setattr(observe, "battle_observation", lambda _: {"remaining_turns": 12, "hp": 20, "genki": 0})
+    facts = exam._detail_state_facts(object())
+    assert (facts is not None) is complete
+    if complete:
+        assert facts["pitem_charges"] is None  # Hidden charge counts do not block inspection.
+
+
 def test_changed_initial_facts_request_reobservation_without_context(monkeypatch):
     monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
     image = np.zeros((2, 2, 3), dtype=np.uint8)

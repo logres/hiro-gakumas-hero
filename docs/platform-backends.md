@@ -1,7 +1,9 @@
-# 平台接口基础版
+# 平台接口与 Windows 实验实现
 
 设备、OCR、窗口恢复的 macOS 实现集中在 `src/hiro/platforms/macos/`。
-这是 Windows 适配的基础接口版本，**尚未实现 DMM 截图、输入、OCR 引擎或窗口恢复**。
+Windows OCR 已提供 `hiro.platforms.windows.ocr`，使用已安装的 KAA/kotonebot 资源中的日文、英文模型。
+Windows 前台设备原型为 `hiro.platforms.windows.device`；窗口恢复 provider 尚未实现。
+OCR 已完成模拟结果测试与本机合成图片识别；这不代表 DMM 截图、输入或完整游戏流程已经实机验收。
 决策、规则、提示词和状态记账保持原实现；本次额外增加的模型接入见 [LLM 配置](llm-backends.md)。
 
 ## 保持不变的调用入口
@@ -23,10 +25,13 @@
 值为实现所有对应方法的模块路径，或 `包.模块:无参工厂`，工厂返回实现对象。
 
 ```powershell
-# 下列是未来 Windows provider 的示意路径，仓库尚未提供这些模块。
-$env:HIRO_DEVICE_BACKEND = 'my_windows.device:Backend'
-$env:HIRO_OCR_BACKEND = 'my_windows.ocr:Backend'
-$env:HIRO_WINDOW_BACKEND = 'my_windows.window:Backend'
+# 已提供的 Windows OCR 模块（模块直接实现 ocr / ocr_boxes）。
+$env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
+# 显式选择前台设备原型；截图激活游戏，点击移动真实鼠标。
+$env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.device'
+# 默认精确匹配窗口标题 gakumas；也可选择一个已确认的 HWND。
+$env:HIRO_WINDOW_TITLE = 'gakumas'
+# HIRO_WINDOW_BACKEND 暂无 Windows 实现，完整 play 仍未就绪。
 ```
 
 程序内也可在连接设备之前调用 `hiro.platforms.register("ocr", provider)`，其优先级高于环境变量。
@@ -49,6 +54,15 @@ $env:HIRO_WINDOW_BACKEND = 'my_windows.window:Backend'
   若某客户端确实无需窗口修复，可提供无操作 guard，但仍须正确判断 LIVE。
 
 ## 验证范围
+
+Windows OCR 默认将日文与英文请求交给日文识别模型；仅英文请求使用英文模型。
+模型与引擎延迟加载并缓存；缺少依赖或模型时抛错，不下载模型，也不回退到默认中文识别模型。
+不支持的语言明确报错。具体配置、依赖和合成识别结果见 [Windows 验证记录](windows-validation.md)。
+
+Windows 设备拒绝零个或多个匹配窗口，连接时固定 HWND 与进程；激活后核对前台窗口。
+截图按客户区实际大小更新缩放器；截图后发生尺寸变化则拒绝使用旧截图坐标点击。
+配置 `HIRO_WINDOW_HWND` 时优先使用该句柄（十进制或 `0x` 十六进制）。
+安装步骤见 [Windows 环境安装](windows-setup.md)。
 
 `tests/test_platform_backends.py` 在不安装 KAA / Apple 框架时验证公共导入、Windows 缺失实现报错、
 注入设备与窗口恢复、OCR 公共辅助函数、配置优先级和 Mac 默认选择。

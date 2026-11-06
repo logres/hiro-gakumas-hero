@@ -85,3 +85,35 @@ def test_exact_zero_count_can_confirm_empty_visible_group(monkeypatch):
     monkeypatch.setattr(reader.deck,"read_card_grid",lambda *a:[])
     group=reader.read_exam_visible_groups(np.zeros((1280,720,3),np.uint8))["groups"][0]
     assert group["complete"] and group["cards"]==[]
+
+
+def test_single_confident_scale_requires_independent_exact_token(monkeypatch):
+    calls=[]
+    def ocr(img,scale=3):
+        if scale==3:return [("山札()",.99,(50,235,160,270))]
+        return [("山札",.99,(0,5,80,40)),("（1)",.90 if scale==1 else .84,(80,5,140,40))]
+    monkeypatch.setattr(reader,"ocr_boxes",ocr)
+    monkeypatch.setattr(reader,"read_dddd",lambda img,box:calls.append(box) or 1)
+    assert reader._headings(np.zeros((1280,720,3),np.uint8))[0]["count"]==1
+    assert calls==[(105,623,165,658)]
+    monkeypatch.setattr(reader,"read_dddd",lambda *a:2)
+    assert reader._headings(np.zeros((1280,720,3),np.uint8))[0]["count"] is None
+
+
+def test_explicit_ocr_conflict_never_uses_third_vote(monkeypatch):
+    def ocr(img,scale=3):
+        if scale==3:return [("山札()",.99,(50,235,160,270))]
+        return [("山札",.99,(0,5,80,40)),("(1)" if scale==1 else "(2)",.99 if scale==1 else .84,(80,5,140,40))]
+    monkeypatch.setattr(reader,"ocr_boxes",ocr)
+    monkeypatch.setattr(reader,"read_dddd",lambda *a: (_ for _ in ()).throw(AssertionError()))
+    assert reader._headings(np.zeros((1280,720,3),np.uint8))[0]["count"] is None
+
+
+def test_missing_parenthesis_or_combined_label_never_gets_fixed_digit_crop(monkeypatch):
+    for text in ["山札1)","山札(1)"]:
+        def ocr(img,scale=3):
+            if scale==3:return [("山札()",.99,(50,235,160,270))]
+            return [(text,.99 if scale==1 else .84,(0,5,140,40))]
+        monkeypatch.setattr(reader,"ocr_boxes",ocr)
+        monkeypatch.setattr(reader,"read_dddd",lambda *a: (_ for _ in ()).throw(AssertionError()))
+        assert reader._headings(np.zeros((1280,720,3),np.uint8))[0]["count"] is None

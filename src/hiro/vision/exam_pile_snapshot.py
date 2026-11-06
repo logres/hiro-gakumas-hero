@@ -7,6 +7,7 @@ import hashlib
 import re
 
 from hiro.vision import deck
+from hiro.vision.digits import read_dddd
 from hiro.vision.exam_card_details import is_exam_card_list
 from hiro.vision.ocr import ocr_boxes
 
@@ -35,14 +36,31 @@ def _headings(img):
             # Two scales must agree, and neither may disagree on the pile label.
             top,bottom=max(y1,box[1]-12),min(y2,box[3]+12)
             candidates=[]
+            explicit_counts=[]
+            independent_tokens=[]
             for scale in (1.0,2.0):
                 parts=ocr_boxes(img[top:bottom,25:210],scale=scale)
                 joined=_normalize("".join(t for t,_,_ in sorted(parts,key=lambda p:p[2][0])))
                 recovered=re.fullmatch(r"(手札|山札|捨札|除外)\((\d+)\)",joined)
-                candidates.append(int(recovered[2]) if recovered and recovered[1]==match[1]
-                                  and parts and all(p >= HEADING_MIN_CONFIDENCE for _,p,_ in parts) else None)
-            if candidates[0] is not None and candidates[0]==candidates[1]:
+                explicit=int(recovered[2]) if recovered and recovered[1]==match[1] else None
+                explicit_counts.append(explicit)
+                confident=bool(parts) and all(p >= HEADING_MIN_CONFIDENCE for _,p,_ in parts)
+                candidates.append(explicit if confident else None)
+                tokens=[b for t,_,b in parts if re.fullmatch(r"\(\d+\)",_normalize(t))]
+                if explicit is not None and confident and len(tokens)==1:
+                    a,b,c,d=tokens[0]
+                    if 0 <= a < c <= 185 and 0 <= b < d <= bottom-top:
+                        independent_tokens.append((explicit,(a+25,b+top,c+25,d+top)))
+            # Explicit disagreement is not broken by a third vote, even if one
+            # OCR confidence is lower. Missing readings do not create a vote.
+            conflict=len({n for n in explicit_counts if n is not None})>1
+            if not conflict and candidates[0] is not None and candidates[0]==candidates[1]:
                 count=candidates[0]
+            elif not conflict:
+                for candidate,token_box in independent_tokens:
+                    if read_dddd(img,token_box)==candidate:
+                        count=candidate
+                        break
         result.append(dict(pile=PILE_NAMES[match[1]],label=match[1],count=count,
                            text=text,confidence=float(confidence),box=box))
     return sorted(result,key=lambda h:h["box"][1])
@@ -86,4 +104,6 @@ def read_exam_visible_groups(img):
                                      rect=list(c["rect"]),identity_basis="visible_thumbnail") for c in cells]
         out["groups"].append(group)
     return out
+
+
 

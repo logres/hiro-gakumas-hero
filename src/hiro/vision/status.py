@@ -23,8 +23,8 @@ from kaa.db.skill_card import SkillCard
 from hiro.vision import assets
 from hiro.vision.region_cache import RegionCache, cached
 from hiro.vision import layout
-from hiro.vision.digits import read_dddd, read_leading_int
-from hiro.vision.ocr import ocr
+from hiro.vision.digits import read_dddd, read_leading_int, GROUP_GAP
+from hiro.vision.ocr import ocr, ocr_boxes
 
 ICON_PREFIX = "img_general_icon_exam-effect_"
 _FIRST_SLOT = "BuffListRoot/BuffList/ExamMainBuffView"
@@ -201,6 +201,42 @@ def _unit_label(img: MatLike, k: int) -> str | None:
     return next((u for u in UNITS if u in label), None)
 
 
+def _font_digit_sequence(glyphs):
+    """Read contiguous known digits without dropping intervening glyphs."""
+    glyphs = sorted(glyphs)
+    known = [g for g in glyphs if g[3] is not None]
+    if not known:
+        return None
+    left, right = known[0][0], known[-1][0] + known[-1][1]
+    if any(char is None and x < right and x+w > left for x,w,h,char in glyphs):
+        return None
+    if any(b[0]-a[0]-a[1] > max(a[2],b[2])*GROUP_GAP for a,b in zip(known,known[1:])):
+        return None
+    return int("".join(g[3] for g in known))
+
+
+def _font_digits_without_ring(img: MatLike, k: int) -> int | None:
+    """Independent glyph check for a number whose background erased its ring."""
+    from hiro.vision import digits
+    cy = _slot_y(k)
+    crop = cv2.resize(img[cy:cy + 34, SLOT_X + 10:SLOT_X + 62], None, fx=3, fy=3,
+                      interpolation=cv2.INTER_CUBIC)
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    dark = hsv[:, :, 2] < digits.DARK_V
+    fill = cv2.inRange(hsv, *digits.WHITE)
+    fill[cv2.dilate(dark.astype(np.uint8), np.ones((3,3),np.uint8)) > 0] = 0
+    fill = cv2.morphologyEx(fill, cv2.MORPH_OPEN, np.ones((3,3),np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(fill)
+    glyphs = []
+    for i in range(1,count):
+        x,y,w,h,area = stats[i]
+        if not digits.GLYPH_H_RANGE[0]*3 <= h <= digits.GLYPH_H_RANGE[1]*3 or area < 60:
+            continue
+        score, char = digits._best_char(digits._scale(labels[y:y+h,x:x+w] == i))
+        glyphs.append((x,w,h,char if score >= digits.MIN_SCORE and char is not None and char.isdigit() else None))
+    return _font_digit_sequence(glyphs)
+
+
 def _verified_status_number(img: MatLike, k: int) -> int | None:
     """Recover a failed font read with independent engine and crop agreement.
 
@@ -211,16 +247,20 @@ def _verified_status_number(img: MatLike, k: int) -> int | None:
     cy = _slot_y(k)
     x1, y1, x2, y2 = SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32
     padded = read_dddd(img, (x1 - 2, y1 - 2, x2 + 2, y2 + 2))
-    if padded is None:
-        return None
     for crop in (img[y1:y2, x1:x2], img[cy - 2:cy + 34, SLOT_X + 14:SLOT_X + 130]):
         lines = ocr(crop, scale=1.0)
         if len(lines) != 1:
             continue
         text, confidence = lines[0]
         match = re.fullmatch(r"([0-9]+)[%％]?", text.strip())
-        if confidence >= 0.9 and match is not None and int(match[1]) == padded:
-            return padded
+        if confidence >= 0.9 and match is not None:
+            native = int(match[1])
+            if native == padded:
+                return native
+            # ddddocr may incorporate the percent glyph as a final 9. Require
+            # a literal observed percent AND independent exact digit glyphs.
+            if text.strip().endswith(("%", "％")) and _font_digits_without_ring(img,k) == native:
+                return native
     return None
 
 
@@ -251,6 +291,46 @@ def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple
     return value, _unit_label(img, k)
 
 
+def _duration_candidates(boxes):
+    """Join only adjacent, overlapping-baseline boxes; never repair letters."""
+    candidates = set()
+    ordered = sorted(boxes, key=lambda line:line[2][0])
+    for start in range(len(ordered)):
+        text = ""
+        previous = None
+        confidence_sum = 0.0
+        character_count = 0
+        pieces = 0
+        anchor = ordered[start][2]
+        for piece, confidence, box in ordered[start:]:
+            piece = piece.strip()
+            if not piece or confidence < 0.6:
+                break
+            if previous is not None:
+                overlap = min(previous[3],box[3])-max(previous[1],box[1])
+                height = min(previous[3]-previous[1],box[3]-box[1])
+                gap = box[0]-previous[2]
+                anchor_overlap = min(anchor[3],box[3])-max(anchor[1],box[1])
+                anchor_height = min(anchor[3]-anchor[1],box[3]-box[1])
+                if overlap < height/2 or gap > height or anchor_overlap < anchor_height/2:
+                    break
+            text += piece
+            confidence_sum += confidence * len(piece)
+            character_count += len(piece)
+            pieces += 1
+            previous = box
+            match = re.fullmatch(r"([0-9]+)(ターン|回)",text)
+            # A complete OCR string keeps the original 0.9 requirement.
+            # Fragment joins require every piece >=0.6 and >=0.89 by actual
+            # character count, plus independent number and card-art agreement
+            # at the caller. This admits one weaker suffix, not a weak body.
+            trustworthy = (confidence >= 0.9 if pieces == 1 else
+                           confidence_sum / character_count >= 0.89)
+            if match and trustworthy:
+                candidates.add((int(match[1]),match[2]))
+    return candidates
+
+
 def _trailing_enchant(img: MatLike, k: int) -> dict | None:
     """Confirm one adjoining low-outline slot by card art AND duration text."""
     score, asset = match_enchant_card(img, k)
@@ -263,9 +343,10 @@ def _trailing_enchant(img: MatLike, k: int) -> dict | None:
     cy = _slot_y(k)
     # Keep the whole diamond as OCR context: tight label crops can split
     # ターン into unrelated fragments against the moving stage backdrop.
-    lines = ocr(img[cy - 35:cy + 55, max(0, SLOT_X - 45):SLOT_X + 155], scale=1.0)
-    durations = {(int(match[1]), match[2]) for text, confidence in lines
-                 if confidence >= 0.9 and (match := re.fullmatch(r"([0-9]+)(ターン|回)", text.strip()))}
+    durations = set()
+    for region in (img[cy-2:cy+34,SLOT_X+14:SLOT_X+130],
+                   img[cy-35:cy+55,max(0,SLOT_X-45):SLOT_X+155]):
+        durations.update(_duration_candidates(ocr_boxes(region,scale=1.0)))
     if len(durations) != 1:
         return None
     observed_value, unit = next(iter(durations))

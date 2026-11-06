@@ -151,3 +151,24 @@ def test_flat_interior_fragment_is_not_silently_dropped(monkeypatch):
     img = capsule("1")
     img[125:127,153:173] = (255,180,0)
     assert hif.read_extra_turns(img) is None
+
+
+@pytest.mark.synthetic
+@pytest.mark.parametrize("height",[4,9])
+def test_right_edge_mark_above_anchored_text_row_is_scenery(monkeypatch,height):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    img=capsule("1")
+    img[120:158,95:155]=(255,255,255)
+    original=capsule("1")
+    glyphs=np.any(original!=0,axis=2)&np.any(original!=255,axis=2)
+    img[glyphs]=original[glyphs]
+    img[125:125+height,176:178]=(255,180,0)
+    assert hif.read_extra_turns(img)==1
+
+
+@pytest.mark.synthetic
+def test_right_edge_unknown_reaching_digit_baseline_stays_unknown(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    img=capsule("1")
+    img[129:148,174:178]=(255,180,0)
+    assert hif.read_extra_turns(img) is None

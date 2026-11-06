@@ -901,8 +901,18 @@ def read_extra_turns(img: MatLike) -> int | None:
     components = sorted((s[0], i, s) for i, s in enumerate(stats[1:], 1)
                         if s[4] >= 10 and not
                         ((s[4] <= 20 and s[3] < 10 and (s[0] == 0 or s[0] + s[2] == w))
-                         or (windows_edge and ((x == 0 and s[0] == 0 and s[2] <= 6 and s[3] <= 16 and s[4] <= 60)
-                                               or (s[0] + s[2] == w and s[3] <= 3 and s[2] >= 16)))))
+                         or (windows_edge and x == 0 and s[0] == 0 and s[2] <= 6 and s[3] <= 16 and s[4] <= 60)))
+    if windows_edge:
+        # A unique, complete plus anchors the text row. Edge-connected marks
+        # above its midline cannot be the following baseline-aligned digit.
+        # Interior marks and marks extending down into the text row stay unknown.
+        pluses = [s for _, label, s in components if _is_plus(cv2.resize(
+            (labels[s[1]:s[1]+s[3], s[0]:s[0]+s[2]] == label).astype(np.uint8), None, fx=3, fy=3))]
+        if len(pluses) == 1:
+            px, py, pw, ph, _ = pluses[0]
+            components = [(cx, label, s) for cx, label, s in components if not
+                          (s[0] + s[2] == w and s[0] > px + pw and s[1] < py
+                           and s[1] + s[3] <= py + ph // 2)]
     templates = _templates()
     digits = []
     for index, (_, label, s) in enumerate(components):

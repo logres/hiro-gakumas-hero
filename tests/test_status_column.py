@@ -176,7 +176,7 @@ def test_trailing_slot_needs_high_card_match_and_explicit_positive_duration(monk
     monkeypatch.setattr(status,"match_enchant_card",lambda *_:(score,"art"))
     monkeypatch.setattr(status,"_card_from_asset",lambda _:SimpleNamespace(_id="card",name="effect"))
     monkeypatch.setattr(status,"_value",lambda *_:(value,unit))
-    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[(f"{value}{unit}",.99)] if unit else [])
+    monkeypatch.setattr(status,"ocr_boxes",lambda *args,**kw:[(f"{value}{unit}",.99,(0,0,80,30))] if unit else [])
     entry=status._trailing_enchant(np.zeros((1280,720,3),np.uint8),7)
     assert bool(entry) is accepted
     if accepted:
@@ -226,3 +226,51 @@ def test_native_status_flag_off_does_not_extend_column(monkeypatch):
     monkeypatch.setattr(status,"_read_slot",lambda img,k:{"slot":k,"kind":"status","key":"examreview","value":10})
     monkeypatch.setattr(status,"_trailing_enchant",lambda *_:pytest.fail("flag off"))
     assert len(status.read_status_column(np.zeros((1280,720,3),np.uint8)))==1
+
+
+@pytest.mark.parametrize("native,padded,glyph,expected", [
+    ("20％",209,20,20), ("20％",209,29,None), ("20",209,20,None),
+    ("20％",20,None,20)])
+def test_percent_digit_conflict_requires_literal_unit_and_independent_glyphs(monkeypatch,native,padded,glyph,expected):
+    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[(native,.99)])
+    monkeypatch.setattr(status,"read_dddd",lambda *_:padded)
+    monkeypatch.setattr(status,"_font_digits_without_ring",lambda *_:glyph)
+    assert status._verified_status_number(np.zeros((1280,720,3),np.uint8),6)==expected
+
+
+@pytest.mark.parametrize("pieces,expected", [
+    ([("2ター",.98,(0,0,54,36)),("ン",.64,(41,0,81,34))],{(2,"ターン")}),
+    ([("2ター",.98,(0,0,54,36)),("ン",.98,(41,40,81,74))],set()),
+    ([("2タ",.98,(0,0,54,36)),("ン",.98,(41,0,81,34))],set()),
+    ([("2ター",.98,(0,0,54,36)),("ン",.98,(141,0,181,34))],set())])
+def test_duration_box_join_never_crosses_baseline_or_invents_missing_text(pieces,expected):
+    assert status._duration_candidates(pieces)==expected
+
+
+def test_local_r25_lossless_percent_and_split_duration(monkeypatch):
+    path=Path(__file__).resolve().parents[1]/"reports/runs/20261107-072647/frames/00005-exam_card_detail_state_changed.png"
+    if not path.exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    rows=status.read_status_column(cv2.imread(str(path)),cache=None)
+    assert observed(rows)["motivation"]==7
+    assert observed(rows)["impression"]==123
+    assert status.status_summary(rows)["examlessonvaluemultiple"]==20
+    assert rows[-1]["name"]=="夢色リップ" and rows[-1]["value"]==2
+    assert rows[-1]["unit"]=="ターン" and len(rows)==8
+
+
+@pytest.mark.parametrize("body,tail,expected",[(.98,.64,True),(.60,.99,False),(.99,.59,False),(.88,.88,False)])
+def test_duration_fragments_require_reliable_body_and_minimum_tail(body,tail,expected):
+    boxes=[("2ター",body,(0,0,54,36)),("ン",tail,(41,0,81,34))]
+    assert bool(status._duration_candidates(boxes)) is expected
+
+
+def test_complete_duration_preserves_original_confidence_requirement():
+    assert status._duration_candidates([("2ターン",.899,(0,0,81,34))]) == set()
+
+
+def test_unknown_internal_font_glyph_cannot_be_dropped_to_make_short_number():
+    assert status._font_digit_sequence([(0,10,20,"2"),(12,10,20,None),(24,10,20,"0")]) is None
+    assert status._font_digit_sequence([(0,10,20,"2"),(12,10,20,"0")]) == 20

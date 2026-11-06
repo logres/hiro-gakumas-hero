@@ -331,6 +331,8 @@ def deck_diff(expected: list[dict], observed: list[dict]) -> dict:
 # ---------------------------------------------------------------- 选卡弹窗：删除 / 强化 / 换卡第 2 步的选中项
 CURSOR_EXPAND, CURSOR_CORNER = 16, 30  # 选中格的橙色角框在卡格外侧约 16 像素、每角约 30 像素
 CURSOR_MIN_PX_118 = 600  # 118 像素卡格：选中 1103–1251，未选 ≤190（含橙色插图）
+CHANGE_GRID = (66, 623, 641, 1106)
+CHANGE_DETAIL_BOX = (170, 255, 670, 315)  # 换卡第2步：牌名位于中间大详情框首行
 DETAIL_BOX = (170, 95, 720, 160)  # 顶部详情栏第一行（卡名）
 
 
@@ -376,12 +378,12 @@ SCROLL_THUMB_MIN = 40
 
 
 def dialog_scroll(img: MatLike, region: tuple[int, int, int, int], x: int = SCROLL_X) -> dict:
-    """选卡对话框的滚动条 → {scrollable, thumb: [y1, y2] | None, at_top}。没有滑块 = 整副牌组都在这一屏。
-    到底与否以「滑一次没读到新行」为准（merge_dialog_screens 的 new_rows == 0），滑块位置只作参考（还没有滚动中的实机样本）。"""
+    """选卡对话框的滚动条 → {scrollable, thumb, at_top, at_bottom}。无滑块按单屏处理。
+    day17真实多屏：顶端离region.top15px，底端离region.bottom13px；仅边界内15px算端点。"""
     _, y1, _, y2 = region
     v = img[y1:y2, x - 4 : min(img.shape[1], x + 5)].astype(int).max(axis=2)
     if v.shape[1] < 9:
-        return {"scrollable": False, "thumb": None, "at_top": True}
+        return {"scrollable": False, "thumb": None, "at_top": True, "at_bottom": True}
     diff = v[:, 4] - (v[:, 0] + v[:, 8]) / 2
     on = (diff >= 25) & (v[:, 4] >= 120)
     best, start = None, None
@@ -393,8 +395,8 @@ def dialog_scroll(img: MatLike, region: tuple[int, int, int, int], x: int = SCRO
                 best = (start, i)
             start = None
     if best is None:
-        return {"scrollable": False, "thumb": None, "at_top": True}
-    return {"scrollable": True, "thumb": [y1 + best[0], y1 + best[1]], "at_top": best[0] <= 15}
+        return {"scrollable": False, "thumb": None, "at_top": True, "at_bottom": True}
+    return {"scrollable": True, "thumb": [y1 + best[0], y1 + best[1]], "at_top": best[0] <= 15, "at_bottom": len(on) - best[1] <= 15}
 
 
 def _cell_match(a: dict, b: dict) -> bool | None:
@@ -418,7 +420,7 @@ def _block_match(ra: list[list[dict]], rb: list[list[dict]]) -> bool:
     return hits >= len(ra)
 
 
-DECK_SIZE_TOL = 2  # 拼出的张数与记账张数最多差几张（记账会漏记少数事件）
+
 
 
 def merge_dialog_screens(screens: list[list[dict]], expected: int | None = None) -> dict:
@@ -429,8 +431,8 @@ def merge_dialog_screens(screens: list[list[dict]], expected: int | None = None)
     返回 {cards: [{deck_index, row, col, card_id, name, upgrade, customized, dimmed, screen}], new_rows, problems, complete}：
     deck_index = 牌组里的全局序号（对话框按牌组顺序排）、row 为全局行号；dimmed = 压暗（强化对话框里 = 满级不能强化）；
     screen = 这张卡（最终采用的那格）来自第几屏（往回滑找卡时参考）；某屏 new_rows == 0 说明已经滑到底（滑了但画面没变也是 0）。
-    complete=False：两屏对不上（滑过了头）、末行之后还有行、或与 expected（记账张数）差超过 DECK_SIZE_TOL —— 这时不要交给决策。
-    没认全的卡另列 unknown（也写进 problems），不影响 complete。
+    layout_complete：各屏重叠拼接可信且有牌；identities_complete：每格ID和版本已知。
+    complete需二者皆真。expected_match单独报告与旧记账是否一致，不据旧账否决当前观测。
     第十四局相談删除：18 张一屏放得下，滑了一次画面没变，两屏没认出的格不同 → 旧版对不上、整屏接在后面，拼成 36 张。"""
     rows: list[list[dict]] = []
     new_rows, problems = [], []
@@ -460,13 +462,18 @@ def merge_dialog_screens(screens: list[list[dict]], expected: int | None = None)
         for c in row:
             out.append({"deck_index": len(out), "row": r, "col": c["col"], "card_id": c["card_id"], "name": c.get("name"),
                         "upgrade": c["upgrade"], "customized": c.get("customized"), "dimmed": c.get("dimmed"), "screen": c["screen"]})  # fmt: skip
-    if expected is not None and abs(len(out) - expected) > DECK_SIZE_TOL:
-        problems.append(f"拼出 {len(out)} 张，记账 {expected} 张，差太多")
-    unknown = [c["deck_index"] for c in out if c["card_id"] is None or c["upgrade"] is None]
-    complete = not problems  # 个别卡没认全不算拼接错（决策不会选认不出的卡），另列 unknown
+    layout_complete = bool(out) and not problems
+    unknown = [c["deck_index"] for c in out if not c.get("card_id") or type(c.get("upgrade")) is not int or c["upgrade"] < 0]
+    identities_complete = not unknown
+    expected_match = len(out) == expected if expected is not None else None
+    if expected_match is False:
+        problems.append(f"拼出 {len(out)} 张，记账 {expected} 张，张数不一致（不以旧记账覆盖观测）")
     if unknown:
         problems.append(f"第 {unknown} 张没认全")
-    return {"cards": out, "new_rows": new_rows, "problems": problems, "unknown": unknown, "complete": complete}
+    return {"cards": out, "new_rows": new_rows, "problems": problems, "unknown": unknown,
+            "layout_complete": layout_complete, "identities_complete": identities_complete,
+            "expected_match": expected_match, "complete": layout_complete and identities_complete}
+
 
 
 def merge_deck_list(screens: list) -> dict:
@@ -495,6 +502,25 @@ def merge_deck_list(screens: list) -> dict:
     return out
 
 
+
+def read_change_incoming(img: MatLike) -> dict | None:
+    """Actually displayed right-hand incoming slot on change stage2, never history.
+
+    Exact card-art match and a known visible preview version are required. The
+    final replacement upgrade is inherited from the outgoing card separately.
+    """
+    from kaa.game_ui.skill_card_select import match_card_region
+    if img.shape[:2] != (1280,720):
+        return None
+    crop = img[98:238,410:550]
+    card = match_card_region(crop)
+    if card is None:
+        return None
+    upgrade = _plus(crop)
+    return {"card_id": card._id, "name": card.name, "upgrade": upgrade,
+            "source": "screen", "box": [410,98,550,238]} if upgrade is not None else None
+
+
 def read_card_dialog(img: MatLike, region: tuple[int, int, int, int] = REMOVAL_GRID) -> dict:
     """相談削除 / 强化、换卡第 2 步等「从牌组里选一张」的弹窗。
 
@@ -512,12 +538,12 @@ def read_card_dialog(img: MatLike, region: tuple[int, int, int, int] = REMOVAL_G
     need = CURSOR_MIN_PX_118 * ((cards[0]["rect"][2] / 118) ** 2 if cards else 1)
     hot = [i for i, v in enumerate(px) if v >= need]
     selected = hot[0] if len(hot) == 1 else None
-    x1, y1, x2, y2 = DETAIL_BOX
+    x1, y1, x2, y2 = CHANGE_DETAIL_BOX if region == CHANGE_GRID else DETAIL_BOX
     ids = {c["card_id"] for c in cards if c["card_id"]}
     detail = next((hit for t, _, _ in ocr_boxes(img[y1:y2, x1:x2]) if (hit := card_from_name(t, ids))), None)
     cell = cards[selected] if selected is not None else None
     agree = None
-    if cell is not None and detail is not None:
+    if cell is not None and cell.get("card_id") is not None and detail is not None:
         agree = cell["card_id"] == detail["card_id"] and cell["upgrade"] in (detail["upgrade"], None)
     if agree is False:
         chosen = None
@@ -527,6 +553,13 @@ def read_card_dialog(img: MatLike, region: tuple[int, int, int, int] = REMOVAL_G
         chosen = {"card_id": cell["card_id"], "name": cell["name"], "upgrade": cell["upgrade"]}
     else:
         chosen = None
+    if cell is not None and cell.get("card_id") is None and detail is not None and type(detail.get("upgrade")) is int:
+        # A low-feature illustration may fail SIFT. Exact name in the visible
+        # detail plus a unique orange selected cell identifies this cell only.
+        x,y,n,_ = cell["rect"]
+        look = img[y:y+n,x:x+n]
+        cell.update(card_id=detail["card_id"], name=detail["name"], upgrade=detail["upgrade"],
+                    customized=_customized(look), identity_basis="selected_cursor_and_exact_detail_name")
     return {"cards": cards, "selected": selected, "selected_card": chosen, "detail": detail, "agree": agree}
 
 

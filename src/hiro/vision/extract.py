@@ -97,6 +97,13 @@ def _card_dialog(img: MatLike) -> dict:
 CARD_DIALOG_BUTTON_ROW = (1100, 1200)  # 删卡 / 强化对话框底部按钮行（720x1280）
 
 
+
+def _change_dialog(img: MatLike) -> dict:
+    from hiro.vision.deck import read_change_incoming, CHANGE_GRID
+    return {**read_card_dialog(img, CHANGE_GRID), "confirm": read_confirm_dialog(img),
+            "incoming_card": read_change_incoming(img)}
+
+
 def dialog_cancelable(img: MatLike) -> bool | None:
     """删卡 / 强化对话框能不能取消（D42）：底部有「キャンセル」（x≈160，右边是 x≈485 的「強化 / 削除」）→ True；
     只有居中的「強化 / 削除」（x≈350，P 道具等触发的必选强化 / 删除，第三十三局本战 #70 #81）→ False；两样都没读到 → None。"""
@@ -154,7 +161,7 @@ EXTRACTORS = {
     "SKILL_CARD_REMOVAL": _removal_dialog,
     "SKILL_CARD_ENHANCE": _enhance_dialog,
     "SKILL_CARD_CHANGE_1": lambda img: __import__("hiro.vision.deck", fromlist=["read_change_candidates"]).read_change_candidates(img),
-    "SKILL_CARD_CHANGE_2": _card_dialog,
+    "SKILL_CARD_CHANGE_2": _change_dialog,
     "SPECIAL_GUIDANCE": lambda img: __import__("hiro.vision.pages", fromlist=["page_fields"]).page_fields("SPECIAL_GUIDANCE", img),
     "HIF_ROUND_INTERVAL": lambda img: __import__("hiro.vision.pages", fromlist=["read_interval"]).read_interval(img),
     "PDRINK_MAX": lambda img: read_pdrink_max(img) or {"error": "没有读到「手持ちのドリンク」"},

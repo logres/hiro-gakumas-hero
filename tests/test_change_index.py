@@ -70,7 +70,7 @@ def test_scan_dialog_deck_merges_and_returns_to_top(monkeypatch):
     screens = _screens(_deck())
     pos = {"i": 0, "swipes": []}
     monkeypatch.setattr(vd, "read_card_dialog", lambda img, region: {"cards": screens[pos["i"]]})
-    monkeypatch.setattr(vd, "dialog_scroll", lambda img, region: {"scrollable": True, "at_top": pos["i"] == 0})
+    monkeypatch.setattr(vd, "dialog_scroll", lambda img, region: {"scrollable": True, "at_top": pos["i"] == 0, "at_bottom": pos["i"] == len(screens) - 1})
 
     def swipe(x1, y1, x2, y2):
         down = y2 < y1

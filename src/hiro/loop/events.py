@@ -74,6 +74,11 @@ def _apply_deck(s: GameState, e: Event) -> None:
             and isinstance(prod.get("deck_size"), int) and prod["deck_size"] == len(deck))
     changed = False
 
+    def pending_deck():
+        if "produce.deck" not in s.pending_review:
+            s.pending_review.append("produce.deck")
+        s.field_status["produce.deck"] = "pending"
+
     def add(card_id, upgrade=0):
         nonlocal changed
         if card_id:
@@ -100,20 +105,42 @@ def _apply_deck(s: GameState, e: Event) -> None:
         if remove(a.get("remove_card_id"), a.get("remove_upgrade")):
             add(a.get("card_id"), a.get("upgrade"))
     elif e.kind == "CARD_UPGRADE":
-        c = next((c for c in deck if c.get("card_id") == a.get("card_id") and not c.get("upgrade")), None)
-        if c is not None:
-            c["upgrade"] = 1
+        target = a.get("upgrade")
+        matches = [c for c in deck if a.get("card_id") and c.get("card_id") == a["card_id"]
+                   and type(target) is int and target > 0 and type(c.get("upgrade")) is int
+                   and c["upgrade"] == target - 1]
+        if len(matches) == 1:
+            matches[0]["upgrade"] = target
+            s.sources["produce.deck"] = Source("event", e.seq)
+        else:
+            # Count is unchanged, but neither a duplicate nor an absent version
+            # establishes which owned copy was upgraded.
+            pending_deck()
+    elif e.kind == "CARD_CUSTOMIZE":
+        matches = [c for c in deck if a.get("card_id") and c.get("card_id") == a["card_id"]
+                   and (a.get("upgrade") is None or c.get("upgrade") == a["upgrade"])]
+        if len(matches) == 1:
+            matches[0]["customized"] = True
+            matches[0]["customization_effects_known"] = False
+        # An identity and upgrade do not describe the newly customized effect.
+        # Keep the count proof, and require a fresh inventory/effect observation.
+        pending_deck()
     elif e.kind == "DECK_REVIEW" and a.get("deck") is not None:
-        prod["deck"] = [{"card_id": c.get("card_id"), "upgrade": int(c.get("upgrade") or 0)} for c in a["deck"]]
+        prod["deck"] = [{"card_id": c.get("card_id"), "upgrade": c.get("upgrade"),
+                         **({"customized": c["customized"]} if "customized" in c else {})}
+                        for c in a["deck"]]
         s.pending_review = [f for f in s.pending_review if f != "produce.deck"]
         complete = (e.confirmed is True and a.get("deck_size", len(prod["deck"])) == len(prod["deck"])
-                    and all(c.get("card_id") for c in prod["deck"]))
+                    and all(c.get("card_id") and type(c.get("upgrade")) is int and c["upgrade"] >= 0
+                            for c in prod["deck"]))
         prod["deck_size"] = len(prod["deck"]) if complete else None
         s.field_status["produce.deck"] = "verified" if complete else "pending"
         s.field_status["produce.deck_size"] = "verified" if complete else "pending"
         if complete:
             s.sources["produce.deck"] = Source("review", e.seq)
             s.sources["produce.deck_size"] = Source("review", e.seq)
+        else:
+            pending_deck()
     elif e.kind in ("CARD_AUTO_PROCESS", "UNMODELED_CHANGE") and "deck" in str(a.get("field", "deck")):
         if "produce.deck" not in s.pending_review:
             s.pending_review.append("produce.deck")
@@ -140,8 +167,10 @@ def _apply_deck(s: GameState, e: Event) -> None:
 def confirmed_deck_size(steps, final_deck: list | None) -> int | None:
     """Recover a count only from a complete review followed by recorded card events.
 
-    Action events must come from a successful execution. An observed event paired
-    with that action is the same acquisition and contributes no second delta.
+    This proves inventory cardinality only, not card upgrades, customization or
+    current effect text. Callers must not mark the full deck verified from this
+    result. Action events must come from a successful execution. An observed event
+    paired with that action is the same acquisition and contributes no second delta.
     """
     owned = None
     pending: Counter = Counter()
@@ -244,8 +273,13 @@ def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict
           card_id=args.get("card_id"), upgrade=args.get("upgrade"))
     elif page == "SKILL_CARD_REMOVAL" and args.get("card_id"):
         E("CARD_DELETE", card_id=args["card_id"], upgrade=args.get("upgrade"), source="event")
-    elif page == "SKILL_CARD_ENHANCE" and args.get("card_id"):
-        E("CARD_UPGRADE", card_id=args["card_id"], upgrade=args.get("upgrade"), source="event")
+    elif page == "SKILL_CARD_ENHANCE" and kind == "EnhanceCard" and args.get("card_id") and not args.get("cancel"):
+        # EnhanceCard identifies the owned source version; result observations
+        # already describe the target version. Normalize before ledger replay.
+        source_upgrade = args.get("upgrade")
+        known = type(source_upgrade) is int and source_upgrade >= 0
+        E("CARD_UPGRADE", card_id=args["card_id"], upgrade=source_upgrade + 1 if known else None,
+          from_upgrade=source_upgrade if known else None, source="event")
     elif page == "PDRINK_MAX" and kind == "DiscardDrink" and args.get("receive") and args.get("discard"):
         E("DRINK_DISCARD", index=args["discard"][0])
     return ev

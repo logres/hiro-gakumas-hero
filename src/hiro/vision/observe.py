@@ -277,6 +277,8 @@ def _card_dialog_observation(fields: dict) -> dict:
     cards = [_deck_card_fields(c) for c in fields.get("cards") or []]
     out = {"cards": cards, "selected": fields.get("selected"), "selected_card": fields.get("selected_card"),
            "agree": fields.get("agree"), "confirm": fields.get("confirm")}  # fmt: skip
+    if "incoming_card" in fields:
+        out["incoming_card"] = fields["incoming_card"]
     if "cancelable" in fields:
         out["cancelable"] = fields["cancelable"]  # D42：False = 必选（没有キャンセル），None = 按钮行没读到
     if "upgradable" in fields:

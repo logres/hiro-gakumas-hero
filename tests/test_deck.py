@@ -184,9 +184,9 @@ def test_merge_q14_no_scroll_wildcards():
     names = [c["name"] for c in m["cards"]]
     assert len(names) == 18 and names.count("えいえいおー") == 2
     assert names[-2:] == ["夢色リップ", "眠気"] and [c["deck_index"] for c in m["cards"]] == list(range(18))
-    # 记账张数差太多 → 不交决策
+    # 旧记账不覆盖当前完整观测；独立报告差异，机制层决定是否重评。
     bad = deck.merge_dialog_screens(screens, expected=30)
-    assert bad["complete"] is False and any("差太多" in p for p in bad["problems"])
+    assert bad["complete"] is True and bad["expected_match"] is False and bad["problems"]
 
 
 def test_merge_wildcard_needs_known_match():

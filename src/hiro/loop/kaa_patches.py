@@ -275,14 +275,19 @@ def scan_dialog_deck(region: tuple[int, int, int, int], *, expected: int | None 
     max_screens = max_screens or CARD_OP_MAX_SCREENS
     img = shoot()
     first = read_card_dialog(img, region)["cards"]
-    if not first or not dialog_scroll(img, region)["scrollable"]:
-        return {"cards": first, "complete": bool(first), "screens": 1, "problems": [] if first else ["卡格没读到"]}
+    initial_scroll = dialog_scroll(img, region)
+    if not first or not initial_scroll["scrollable"]:
+        merged = merge_dialog_screens([first], expected=expected)
+        return {**merged, "cards": first, "screens": 1, "coverage_complete": bool(first)}
     screens = [first]
     merged = merge_dialog_screens(screens, expected=expected)
+    final_scroll = initial_scroll
     for _ in range(max_screens):
         _dialog_swipe(region, True, swipe)
         sleep(CARD_OP_SCROLL_SETTLE)
-        screens.append(read_card_dialog(shoot(), region)["cards"])
+        read_img = shoot()
+        screens.append(read_card_dialog(read_img, region)["cards"])
+        final_scroll = dialog_scroll(read_img, region)
         merged = merge_dialog_screens(screens, expected=expected)
         if merged["new_rows"][-1] == 0:
             break
@@ -292,7 +297,12 @@ def scan_dialog_deck(region: tuple[int, int, int, int], *, expected: int | None 
         _dialog_swipe(region, False, swipe)
         sleep(CARD_OP_SCROLL_SETTLE)
     cards = [{**c, "index": c["deck_index"]} for c in merged["cards"]]
-    return {"cards": cards, "complete": merged["complete"], "screens": len(screens), "problems": merged["problems"]}
+    coverage = initial_scroll.get("at_top") is True and final_scroll.get("at_bottom") is True
+    problems = list(merged["problems"])
+    if not coverage:
+        problems.append("滚动条未同时确认首屏在顶端与末屏在底端")
+    return {**merged, "cards": cards, "screens": len(screens), "coverage_complete": coverage,
+            "complete": bool(merged["complete"] and coverage), "problems": problems}
 
 
 def _dialog_swipe(region, down: bool, swipe) -> None:

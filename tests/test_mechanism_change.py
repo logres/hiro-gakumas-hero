@@ -101,6 +101,31 @@ def test_default_off_and_no_model(state, monkeypatch):
     assert not module.enabled()
     assert not module.readiness(state,"one")
 
+
+def test_stage2_resume_reassesses_only_observed_incoming_and_complete_current_deck(state):
+    state.page_fields = {"deck_complete": True, "cards": list(state.produce["deck"]),
+                         "incoming_card": {"card_id":"new", "upgrade":0}}
+    d = decider([{"action":"change", "pair_id":1, "reason":"fresh complete scan comparison"}])
+    result = module.compare(d, state, "one", 2)
+    assert result.action.kind == ActionKind.CHANGE_CARD
+    assert result.action.args["remove_upgrade"] == 1
+    assert result.action.args["card_id"] == "new"
+    assert result.action.args["upgrade"] == 1
+    assert json.loads(d.llm.calls[0][1])["reassessment"] is True
+
+
+@pytest.mark.parametrize("missing", ["incoming", "complete", "review", "matches"])
+def test_stage2_resume_never_invents_missing_evidence(state, missing):
+    state.page_fields = {"deck_complete": True, "cards": list(state.produce["deck"]),
+                         "incoming_card": {"card_id":"new", "upgrade":0}}
+    if missing == "incoming": state.page_fields.pop("incoming_card")
+    elif missing == "complete": state.page_fields["deck_complete"] = False
+    elif missing == "review": state.field_status["produce.deck"] = "pending"
+    else: state.page_fields["cards"] = state.page_fields["cards"][:-1]
+    d = decider([])
+    assert module.compare(d, state, "one", 2).action.kind == ActionKind.WAIT
+    assert not d.llm.calls
+
 @pytest.mark.parametrize("cards,protected,upgrade", [
     ([{"card_id":"a","upgrade":0}], set(), 1),
     ([{"card_id":"a","upgrade":0},{"card_id":"a","upgrade":0}], set(), 0),

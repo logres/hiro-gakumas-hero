@@ -2,6 +2,8 @@
 # Dot-source in the ordinary PowerShell where Hiro runs. Does not elevate.
 $env:PYTHONUTF8 = '1'
 $env:HIRO_EXPLICIT_IDOL_STATE = '1'
+# Re-observe full inventory across exams and resumed sessions.
+$env:HIRO_DECK_REVIEW = '1'
 # Controlled Windows rollout of first-exam build roles and multi-action setup.
 $env:HIRO_REVIEW_FIRST_EXAM_ROLES = '1'
 $env:HIRO_FINAL_TURN_SETUP = '1'

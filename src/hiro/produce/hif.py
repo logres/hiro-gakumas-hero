@@ -654,7 +654,14 @@ class HiroHifStrategy(HifGrindStrategy):
         field_status = dict(cur.field_status)
         for field in ("produce.deck", "produce.deck_size"):
             field_status[field] = "verified" if size is not None else "unknown"
-        self.s.state = replace(cur, produce=produce, sources=sources, mode=mode, field_status=field_status)
+        pending = list(cur.pending_review)
+        if os.environ.get("HIRO_DECK_REVIEW") == "1":
+            # The old event chain proves counts, not unobserved upgrades/customization.
+            field_status["produce.deck"] = "pending"
+            if "produce.deck" not in pending:
+                pending.append("produce.deck")
+        self.s.state = replace(cur, produce=produce, sources=sources, mode=mode, field_status=field_status,
+                               pending_review=pending)
         self.s.trace.record_initial_state(self.s.state)
         p = last["produce"]
         self.s.note(f"续跑：用之前 trace 的最后状态打底（seq {last_seq}：P {p.get('produce_point')}、体力 {p.get('stamina')}/{p.get('max_stamina')}），"
@@ -847,6 +854,25 @@ class HiroHifStrategy(HifGrindStrategy):
     # ---------------------------------------------------------------- 主动查看牌组（state-events §6）
     _reviewed_at_exam: int | None = None
 
+    def _require_deck_review(self, reason: str) -> None:
+        if os.environ.get("HIRO_DECK_REVIEW") == "1":
+            from hiro.contracts import Event
+
+            self.s.emit(Event(seq=self.s.trace.next_seq(), kind="UNMODELED_CHANGE", origin="review",
+                              args={"field": "produce.deck", "reason": reason}, basis="observe_only"))
+
+    def _accept_change_deck_review(self) -> None:
+        from hiro.brain.mechanism_change import enabled
+        from hiro.contracts import Event
+
+        pf = self.s.state.page_fields
+        cards = pf.get("cards") or []
+        if (enabled() and pf.get("deck_complete") is True and cards
+                and all(c.get("card_id") and type(c.get("upgrade")) is int for c in cards)):
+            self.s.emit(Event(seq=self.s.trace.next_seq(), kind="DECK_REVIEW", origin="review",
+                              args={"deck": cards, "deck_size": len(cards), "source": "change_dialog_full_scan"},
+                              basis="observe_only", confirmed=True))
+
     def _maybe_review_deck(self) -> None:
         """pending_review 含牌组、每场考试之间第一次到选行动页、或调试模式（同一考试段只看一次）时，打开牌组一览读全量，
         作为 DECK_REVIEW 事件写入。读不全只记 pending，不下结论；没关掉一览就停下。"""
@@ -873,6 +899,7 @@ class HiroHifStrategy(HifGrindStrategy):
         if deck_review.SAVE_DIR is None and ops.CALIB_DIR is not None:
             deck_review.SAVE_DIR = ops.CALIB_DIR.parent / "deck-list"  # 一览页帧留档（reports/live/deck-list，核对识别用）
         t0 = time.monotonic()
+        self._require_deck_review("重新打开牌组一览核对；识别失败时不能沿用旧完整性")
         r = review_deck(shoot=device.screenshot, click=device.click,
                         swipe=lambda x1, y1, x2, y2, d: device.swipe(x1, y1, x2, y2, d), ocr_texts=ocr_texts)  # fmt: skip
         self._reviewed_at_exam = self.exam_count
@@ -1096,7 +1123,7 @@ class HiroHifStrategy(HifGrindStrategy):
             logger.warning("%s 整副扫描出错：%r", page, e)
             return False
         if scan["screens"] <= 1:
-            self.s.state.page_fields = {**pf, "deck_complete": True, "deck_screens": 1}
+            self.s.state.page_fields = {**pf, "deck_complete": bool(scan["complete"]), "deck_screens": 1}
             return False
         if scan["complete"]:
             self.s.state.page_fields = {**pf, "cards": scan["cards"], "deck_complete": True, "deck_screens": scan["screens"]}
@@ -1112,6 +1139,8 @@ class HiroHifStrategy(HifGrindStrategy):
         cancel = False
         if ctx.stage == 1:
             t0 = time.monotonic()
+            if os.environ.get("HIRO_MECHANISM_CHANGE") == "1" and "produce.deck" in self.s.state.pending_review:
+                self._maybe_review_deck()
             obs = self.s.observe(scene="SKILL_CARD_CHANGE_1")
             d = self.deciders.decide("SKILL_CARD_CHANGE_1", self.s.state)
             args = d.action.args if d.action.kind is ActionKind.CHANGE_CARD else {}
@@ -1170,6 +1199,7 @@ class HiroHifStrategy(HifGrindStrategy):
                 if self.s.state.page_fields.get("cards"):
                     break
         scanned = self._scan_change_deck()
+        self._accept_change_deck_review()
         d = self.deciders.decide("SKILL_CARD_CHANGE_2", self.s.state)
         if d.decider == "mechanism_change" and d.action.kind is not ActionKind.CHANGE_CARD:
             self._stop("SKILL_CARD_CHANGE_2", d.reason, obs=obs, decision=d)
@@ -1453,6 +1483,7 @@ class HiroHifStrategy(HifGrindStrategy):
             res = read_hif_result(img)
         self.rec.log("exam_result", image=img, exam=label, result={k: res.get(k) for k in ("score", "rank", "passed", "exam_no", "rank_line")})
         self.s.observe(scene="HIF_EXAM_RESULT", img=img, fields=res)
+        self._require_deck_review("考试结算后需复核牌组；未推断任何具体增删、强化或定制")
         if res.get("passed") is not False:
             return False
         texts = ocr.ocr()

@@ -43,6 +43,55 @@ def test_advisor_without_llm_picks_legal_action():
     assert d.action.legal_key() in {a.legal_key() for a in legal}
 
 
+@pytest.mark.parametrize("context", [{"idol": "i_card-kllj-3-000"}, {"idol": None}, {}, None])
+def test_advisor_round_unknown_identity_clears_previous_profile(monkeypatch, context):
+    from hiro.brain.llm import MockLLM, load_prompt
+
+    monkeypatch.setenv("HIRO_EXPLICIT_IDOL_STATE", "1")
+    llm = MockLLM([])
+    advisor = RuleLLMAdvisor(CAMPUS_HIRO, llm)
+    advisor.on_round_start(2, context)
+    assert advisor.round_no == 2
+    assert advisor.profile is advisor.brain.profile is None
+    assert advisor.brain.llm is llm
+    assert advisor.brain.system == load_prompt("exam_generic.md")
+    assert advisor.brain.new_memory("r2").item_charges_left is None
+    assert llm.calls == []
+
+
+def test_advisor_round_different_known_identity_replaces_profile(monkeypatch):
+    from dataclasses import replace
+    from hiro.brain.llm import MockLLM
+
+    # A second registered profile exercises the lifecycle without introducing
+    # a role-specific playbook or depending on future master-data additions.
+    other = replace(CAMPUS_HIRO, idol_id="synthetic-other", item_charges=2)
+    # test_brain_imports removes/reimports state during the full suite. Patch
+    # the registry used by this advisor's actual resolver, not a newer module.
+    resolver = RuleLLMAdvisor.on_round_start.__globals__["profile_for"]
+    monkeypatch.setitem(resolver.__globals__["IDOLS"], other.idol_id, other)
+    llm = MockLLM([])
+    advisor = RuleLLMAdvisor(CAMPUS_HIRO, llm)
+    previous = advisor.brain
+    advisor.on_round_start(2, {"idol": other.idol_id})
+    assert advisor.profile is advisor.brain.profile is other
+    assert advisor.brain is not previous and advisor.brain.llm is llm
+    assert advisor.brain.new_memory("r2").item_charges_left == 2
+    assert llm.calls == []
+
+
+def test_advisor_round_equivalent_skin_identity_keeps_brain():
+    from hiro.brain.llm import MockLLM
+
+    llm = MockLLM([])
+    advisor = RuleLLMAdvisor(CAMPUS_HIRO, llm)
+    previous = advisor.brain
+    advisor.on_round_start(2, {"idol": CAMPUS_HIRO.idol_id.replace("i_card-", "i_card-skin-")})
+    assert advisor.profile is CAMPUS_HIRO
+    assert advisor.brain is previous and advisor.brain.llm is llm
+    assert llm.calls == []
+
+
 def test_advisor_with_previews_follows_best_expected():
     st, mem = _state([_card(0, "A", "c-a"), _card(1, "B", "c-b")])
     legal = [Action.from_legal(a) for a in st.legal_actions()]

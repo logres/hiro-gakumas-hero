@@ -188,6 +188,23 @@ def test_options_known_unaffordable_remains_visible_but_cannot_be_chosen(setup):
     assert options[1]["affordable"] is False and options[1]["exclusion_reason"]
 
 
+@pytest.mark.parametrize("identity,second_label,allowed", [
+    ("opt0", "コスト値-", True),
+    (None, "コスト値-", False),
+    ("different", "コスト値-", False),
+    ("opt0", "別の効果", False),
+])
+def test_options_ocr_minus_requires_same_bound_option(setup, identity, second_label, allowed):
+    reviews = two_reviews(setup)
+    reviews[0]["menu"]["items"][1]["name"] = "コスト値"
+    reviews[1]["menu"]["items"][1].update(name=second_label, id=identity)
+    if identity is None:
+        reviews[0]["menu"]["items"][1]["id"] = None
+    result, llm = run_options(setup, reviews, reply())
+    assert bool(llm.calls) is allowed
+    assert (result.action.kind is ActionKind.CUSTOMIZE_CARD) is allowed
+
+
 def test_options_reply_cannot_mix_one_option_index_and_other_price(setup):
     result, _ = run_options(setup, two_reviews(setup), reply(item_index=0, price=40))
     assert result.action.kind is ActionKind.WAIT

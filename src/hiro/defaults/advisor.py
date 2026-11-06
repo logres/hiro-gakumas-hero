@@ -61,9 +61,13 @@ class RuleLLMAdvisor:
     def on_round_start(self, round_no: int, context: dict[str, Any]) -> None:
         self.round_no = round_no
         idol = (context or {}).get("idol")
-        if idol and (self.profile is None or self.profile.idol_id != idol) and (p := profile_for(idol)) is not None:
-            self.profile = p
-            self.brain = BattleBrain(p, self.brain.llm)
+        # Each round supplies its own identity; unknown/missing identities must
+        # not inherit another idol's prompt or item rules. profile_for also
+        # normalizes skin IDs, so equivalent identities preserve the brain.
+        profile = profile_for(idol)
+        if self.profile != profile:
+            self.profile = profile
+            self.brain = BattleBrain(profile, self.brain.llm)
 
     def decide(self, state: Any, memory: Any, previews: list[Preview] | None, legal: list[Action]) -> Decision:
         t0 = time.monotonic()

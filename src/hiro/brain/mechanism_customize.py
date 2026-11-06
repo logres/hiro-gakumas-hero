@@ -158,7 +158,13 @@ def compare_options(decider, state, identity, reviews, image_jpeg):
         def snapshot(review):
             card = review["selected_card"]
             # Selected-column/highlight/preview vary; all menu facts must remain equal.
-            items = sorted((it["item_index"], it.get("id"), it.get("name"), it.get("price"),
+            def label(it):
+                name = it.get("name")
+                # Native OCR can lose the trailing minus under the highlight.
+                # Only tolerate that glyph when the same exact option ID is
+                # bound; keep all other text, resource and identity comparisons.
+                return name.rstrip("-−－") if it.get("id") and isinstance(name, str) else name
+            items = sorted((it["item_index"], it.get("id"), label(it), it.get("price"),
                             it.get("left"), it.get("available"), it.get("maxed"))
                            for it in review["menu"]["items"])
             return (card["card_id"], card["upgrade"], card["customized"], review["produce_point"],

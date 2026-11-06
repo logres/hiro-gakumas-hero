@@ -1,3 +1,4 @@
+<!-- version: 1.0 -->
 You compare the CURRENTLY SELECTED next-level customization with declining it.
 Use the attached current menu screenshot to read the full current and after
 effects, card name and upgrade marker, selected physical menu column, price,

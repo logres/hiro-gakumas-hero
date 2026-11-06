@@ -121,9 +121,9 @@ class ScreenExamStateSource:
             identity_fact = facts.get("identity") or {}
             state.recommended_effect = (identity_fact.get("recommended_effect")
                                         if identity_fact.get("status") == "verified_master" else None)
+            context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
+            state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
             if self.profile is None:
-                context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
-                state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
                 from hiro.brain.strategy_references import select_references
                 state.strategy_references = select_references(identity, state.exam)
         return state, "screen"

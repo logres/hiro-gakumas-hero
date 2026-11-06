@@ -1,3 +1,4 @@
+<!-- version: 1.0 -->
 Compare the reviewed mutually exclusive NEXT-LEVEL customization options of
 ONE current card before any spending. The composite image panels run left to
 right in reviewed_options order (image_panel_index starts at zero). Each panel

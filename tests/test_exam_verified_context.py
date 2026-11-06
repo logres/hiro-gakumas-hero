@@ -109,3 +109,26 @@ def test_session_identity_wins_and_flag_off_preserves_payload(master, monkeypatc
     monkeypatch.delenv("HIRO_EXPLICIT_IDOL_STATE")
     state, _ = source.read(frame, ExamMemory("qualify-1"))
     assert state.public_info is None
+
+
+@pytest.mark.parametrize("items,status", [
+    ([{"item_id": "log0"}], "confirmed_id"),
+    ([{"asset": "shared-icon"}], "unknown"),
+    ([{"item_id": "absent"}], "unknown"),
+])
+def test_profile_does_not_hide_current_equipment_evidence(master, monkeypatch, items, status):
+    monkeypatch.setenv("HIRO_EXPLICIT_IDOL_STATE", "1")
+    monkeypatch.setattr(exam_state, "screen_fields", lambda raw, session, img=None: raw)
+    monkeypatch.setattr(exam_state, "screen_state", lambda *a, **kw:
+                        SimpleNamespace(public_info="profile reference", recommended_effect=None))
+    source = exam_state.ScreenExamStateSource()
+    source.begin({"idol_card_id": "liliya", "profile": SimpleNamespace(idol_id="hiro")})
+    state, _ = source.read(SimpleNamespace(raw={"pitems": items}, img=None), ExamMemory("qualify-1"))
+    assert state.public_info.startswith("profile reference\n")
+    facts = json.loads(state.public_info.split("已验证主数据与本帧装备识别：", 1)[1])
+    assert facts["identity"]["character_name"] == "葛城リーリヤ"
+    assert facts["observed_pitems"][0]["variant_status"] == status
+    if items[0].get("item_id") == "log0":
+        assert "好印象+1" in facts["observed_pitems"][0]["effect_text"]
+    else:
+        assert "effect_text" not in facts["observed_pitems"][0]

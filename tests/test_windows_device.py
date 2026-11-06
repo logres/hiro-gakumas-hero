@@ -22,6 +22,8 @@ def native(monkeypatch):
     monkeypatch.setattr(backend, "resolve", lambda: (None, None))
     monkeypatch.setattr(WindowsNativeImpl, "__init__", lambda self, *a, **kw: None)
     monkeypatch.setattr(WindowsNativeImpl, "start", lambda self: None)
+    monkeypatch.setattr(WindowsNativeImpl, "_require_started", lambda self: None)
+    monkeypatch.setattr(WindowsNativeImpl, "_client_to_screen", lambda self, x, y: (x+51,y+85))
     monkeypatch.setattr(WindowsNativeImpl, "stop", lambda self: setattr(state, "stopped", state.stopped+1))
     monkeypatch.setattr(WindowsNativeImpl, "_ensure_active", lambda self: None)
     monkeypatch.setattr(WindowsNativeImpl, "_window", lambda self: SimpleNamespace(
@@ -83,6 +85,20 @@ def test_higher_integrity_blocks_click_before_native_input(native, monkeypatch):
 def test_rejects_unknown_mode_before_window_lookup():
     with pytest.raises(ValueError, match="Unsupported"):
         backend.connect("background")
+
+
+def test_opt_in_batch_input_uses_scaled_screen_coordinates(native, monkeypatch):
+    from hiro.platforms.windows import input as atomic_input
+    calls = []
+    monkeypatch.setattr(atomic_input, "click_screen", lambda x,y: calls.append((x,y)))
+    monkeypatch.setenv("HIRO_WINDOWS_MODE", "windows_sendinput")
+    device = backend.connect()
+    try:
+        device.click(360,640)
+        assert calls == [(231,405)]
+        assert native.clicks == []
+    finally:
+        device.stop()
 
 
 def test_activation_accepts_pywin32_none_success(monkeypatch):

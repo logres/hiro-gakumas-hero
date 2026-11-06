@@ -28,6 +28,9 @@ pwsh -NoProfile -File scripts/setup-windows.ps1 -Regen
 $env:HIRO_DEVICE_BACKEND = 'hiro.platforms.windows.device'
 $env:HIRO_OCR_BACKEND = 'hiro.platforms.windows.ocr'
 $env:HIRO_WINDOW_BACKEND = 'hiro.platforms.windows.window'
+# 实验选项：将移动、按下、抬起放入一个 SendInput 批次（尚待 DMM 实测）。
+# 不设置时仍使用原 windows_native 输入。
+# $env:HIRO_WINDOWS_MODE = 'windows_sendinput'
 ```
 
 设备 provider 是显式前台实现：截图会尝试激活选中的窗口，输入会移动真实鼠标。设置环境变量本身不会启动游戏或发送输入；调用设备连接和控制入口时才会使用这些能力。不要据此推断后台挂机可用。

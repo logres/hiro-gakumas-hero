@@ -3,11 +3,15 @@
 Capturing activates the target; input moves the real mouse. No background
 semantics are promised. Enable via HIRO_DEVICE_BACKEND=hiro.platforms.windows.device.
 """
+import os
+
 from .target import activate, ensure_input_access, resolve
 
 
 def connect(backend: str = "auto"):
-    if backend not in ("auto", "windows_native"):
+    if backend == "auto":
+        backend = os.environ.get("HIRO_WINDOWS_MODE", "windows_native")
+    if backend not in ("windows_native", "windows_sendinput"):
         raise ValueError(f"Unsupported Windows device mode: {backend}")
     from kotonebot.client.device import WindowsDevice
     from kotonebot.client.implements.windows.windows_native import WindowsNativeImpl
@@ -30,6 +34,11 @@ def connect(backend: str = "auto"):
 
         def click(self, x, y):
             ensure_input_access(self._window())
+            if backend == "windows_sendinput":
+                from .input import click_screen
+                self._require_started()
+                self._ensure_active()
+                return click_screen(*self._client_to_screen(x,y))
             return super().click(x, y)
 
         def swipe(self, x1, y1, x2, y2, duration=None):

@@ -4,11 +4,59 @@ Requires the game at home and a prior probe screenshot from that home screen.
 Never starts produce or accepts rewards. No automatic elevation.
 """
 import json
+import argparse
 import time
 from pathlib import Path
+from unittest.mock import patch
+
+
+def home_matches(frame, reference):
+    import numpy as np
+    if frame.shape != reference.shape:
+        return False
+    # Menu icon is shared across tabs; require the selected orange Home tab too.
+    regions = [(slice(1180,1260),slice(610,700)), (slice(1125,1208),slice(325,395))]
+    return all(float(np.abs(frame[r].astype(float)-reference[r].astype(float)).mean()) <= 12
+               for r in regions)
+
+
+def traced_click(device, window, x, y, output):
+    import win32gui
+    from kotonebot.interop.win import mouse
+    physical = tuple(device.scaler.logic_to_physical((x,y)))
+    hwnd = int(window.info.id)
+    report = {'logical': [x,y], 'physical': physical,
+              'expected_screen': win32gui.ClientToScreen(hwnd, physical), 'events': []}
+    move, down, up = mouse.set_pos, mouse.down, mouse.up
+    def record(phase):
+        report['events'].append({'phase': phase, 'cursor': win32gui.GetCursorPos(),
+                                 'origin': win32gui.ClientToScreen(hwnd,(0,0)),
+                                 'foreground_is_target': win32gui.GetForegroundWindow()==hwnd})
+    def moving(*args, **kwargs):
+        report['requested_move'] = list(args)
+        move(*args, **kwargs)
+        record('move')
+    def pressing(*args, **kwargs):
+        record('down')
+        if tuple(win32gui.GetCursorPos()) != tuple(report['expected_screen']):
+            raise RuntimeError('Cursor not at expected target; button-down blocked')
+        down(*args, **kwargs)
+    def releasing(*args, **kwargs):
+        record('up')
+        up(*args, **kwargs)
+    try:
+        with patch.object(mouse,'set_pos',moving), patch.object(mouse,'down',pressing), patch.object(mouse,'up',releasing):
+            device.click(x,y)
+    finally:
+        record('after_click')
+        output.write_text(json.dumps(report,indent=2),encoding='utf-8')
+        print(json.dumps({'input_diagnostic':report}),flush=True)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--backend', choices=['windows_native','windows_sendinput'], default='windows_native')
+    args = parser.parse_args()
     import cv2
     import numpy as np
     from hiro.platforms.windows.device import connect
@@ -21,16 +69,13 @@ def main():
     reference = cv2.imread(str(root / 'logical.png'))
     if reference is None or reference.shape != (1280, 720, 3):
         raise RuntimeError('A 720x1280 home probe screenshot is required before this test')
-    crop = (slice(1180, 1260), slice(610, 700))
-    device = connect()
+    device = connect(args.backend)
     try:
         before = device.screenshot()
-        if before.shape != reference.shape:
-            raise RuntimeError('Unexpected layout; no input sent')
-        delta = float(np.abs(before[crop].astype(float) - reference[crop].astype(float)).mean())
-        if delta > 12:
-            raise RuntimeError('Home menu icon changed; no input sent')
-        device.click(653, 1216)
+        cv2.imwrite(str(root / 'menu-before-check.png'), before)
+        if not home_matches(before, reference):
+            raise RuntimeError('Selected Home tab/menu not confirmed; no input sent')
+        traced_click(device, window, 653, 1216, root / 'menu-input.json')
         time.sleep(1)
         opened = device.screenshot()
         cv2.imwrite(str(root / 'menu-open-check.png'), opened)
@@ -52,8 +97,7 @@ def main():
         time.sleep(1)
         closed = device.screenshot()
         cv2.imwrite(str(root / 'menu-closed-check.png'), closed)
-        if closed.shape != reference.shape or float(np.abs(
-                closed[crop].astype(float)-reference[crop].astype(float)).mean()) > 12:
+        if not home_matches(closed, reference):
             raise RuntimeError('Close click sent but return to home not confirmed')
         print('DMM menu open/close PASSED: two bounded clicks, no produce or purchases')
     finally:

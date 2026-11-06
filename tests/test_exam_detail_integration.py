@@ -18,7 +18,7 @@ def test_detail_inspection_restoration_gates_decision_context(monkeypatch, resto
     evidence = [{**identity, "selected_card": identity, "detail_card": identity,
                  "selection_verified": True, "snapshot_sha256": token,
                  "raw_ocr_lines": ["スキルカード使用数追加+1"]}]
-    state = SimpleNamespace(hand=hand, public_info="catalog")
+    state = SimpleNamespace(hand=hand, public_info="catalog", legal_actions=lambda: ["play:2", "skip"])
     events = []
     rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
     globals_ = exam._review_current_card_details.__globals__
@@ -45,7 +45,7 @@ def test_detail_inspection_disabled_by_default(monkeypatch):
 def test_changed_initial_facts_request_reobservation_without_context(monkeypatch):
     monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
     image = np.zeros((2, 2, 3), dtype=np.uint8)
-    state = SimpleNamespace(hand=[], public_info="catalog")
+    state = SimpleNamespace(hand=[], public_info="catalog", legal_actions=lambda: ["drink:0", "skip"])
     events = []
     rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts",
@@ -75,3 +75,13 @@ def test_supervisor_does_not_restart_blocked_detail_inspection(monkeypatch):
         run_hif._supervised_resume(None, None, session, Strategy=object())
     assert attempts == [True]
     assert recoveries == []
+
+
+def test_forced_skip_does_not_open_details(monkeypatch):
+    from hiro.brain.cards import CardView
+    from hiro.brain.state import BattleState
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
+    card = CardView(0, "unavailable", "any-card", 0, False, "mental", 0, 0, None, "")
+    state = BattleState("qualify-3", 9, 4, 26, 45, 7, [card])
+    assert state.legal_actions() == ["skip"]
+    assert exam._review_current_card_details(state, None, None) is True

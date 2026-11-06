@@ -1038,6 +1038,8 @@ def _review_current_card_details(state, frame, rec):
     """Optional read-only inspection; never reuse effects after another action."""
     if os.environ.get("HIRO_EXAM_CARD_DETAILS") != "1":
         return True
+    if state.legal_actions() == ["skip"]:
+        return True  # There is no card/drink choice for detail evidence to inform.
     from hiro.brain.card_effect_evidence import attach_card_effect_context
     from hiro.exec.card_detail_review import image_sha256, review_exam_hand_details
 

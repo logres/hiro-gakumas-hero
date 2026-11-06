@@ -29,6 +29,7 @@ VERSION_FILES = (
     "src/hiro/brain/battle.py", "src/hiro/brain/rules.py", "src/hiro/brain/state.py",
     "src/hiro/brain/cards.py", "src/hiro/produce/exam_policy.py", "src/hiro/defaults/advisor.py",
     "src/hiro/brain/fallback_drinks.py", "src/hiro/brain/route_policy.py",
+    "src/hiro/brain/plan_evidence.py",
     "src/hiro/brain/prompts/exam.md", "src/hiro/brain/prompts/exam_generic.md",
     "src/hiro/brain/strategy_references.py", "src/hiro/defaults/strategy_refs/review_engine_action.json",
 )
@@ -115,6 +116,8 @@ def _state(payload: dict) -> tuple[BattleState, ExamMemory, IdolProfile | None, 
 
 @contextmanager
 def _flags(saved: dict):
+    # Schema 1.0 inputs recorded before this opt-in existed used legacy plans.
+    saved = {"HIRO_PLAN_EFFECT_REVALIDATION": False, **saved}
     if set(saved) != set(FLAGS) or any(type(v) is not bool for v in saved.values()):
         raise ValueError("策略 flags 缺失或无效")
     old = {name: os.environ.get(name) for name in (*FLAGS, "HIRO_LLM")}

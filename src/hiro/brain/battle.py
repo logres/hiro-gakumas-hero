@@ -38,13 +38,23 @@ class BattleBrain:
             return d
         if d := self._follow_plan(state, memory):
             d.warnings = soft_warnings(state, d)
-            return self._final_turn(state, memory, d)
+            result = self._final_turn(state, memory, d)
+            from hiro.brain import plan_evidence
+            if plan_evidence.enabled() and result is not d:
+                memory.plan = plan_evidence.stamp(memory.plan, state)
+                result.plan = plan_evidence.public_plan(result.plan)
+            return result
         d = self._ask(state) if self.llm else None
         if d is None:
             d = fallback(state)
         d.warnings = soft_warnings(state, d)
         memory.plan = d.plan
-        return self._final_turn(state, memory, d)
+        d = self._final_turn(state, memory, d)
+        from hiro.brain import plan_evidence
+        if plan_evidence.enabled():
+            memory.plan = plan_evidence.stamp(memory.plan, state)
+            d.plan = plan_evidence.public_plan(d.plan)
+        return d
 
     def _final_turn(self, state: BattleState, memory: ExamMemory, d: Decision) -> Decision:
         """最后一回合的兑现由代码按真实得分决定（第八局 R2：届いて！+ 在手没打出去）。"""
@@ -78,6 +88,13 @@ class BattleBrain:
     def _follow_plan(self, state: BattleState, memory: ExamMemory) -> Decision | None:
         if not memory.plan:
             return None
+        from hiro.brain import plan_evidence
+        if plan_evidence.enabled() and plan_evidence.changed(memory.plan, state):
+            hint = plan_evidence.public_plan(memory.plan)
+            memory.plan = []
+            state.public_info = "\n".join(p for p in (state.public_info,
+                "实际效果信息已补充或变化，旧计划仅供重新评估：" + json.dumps(hint, ensure_ascii=False)) if p)
+            return None
         step = memory.plan[0]
         if step.get("action") == "play":
             card = next((c for c in state.hand if c.name == step.get("card") and c.available), None)
@@ -90,7 +107,7 @@ class BattleBrain:
         if action is None or not self._hand_as_expected(state, memory):
             memory.plan = []
             return None
-        d = Decision(action, "按本回合计划继续", "plan", plan=memory.plan)
+        d = Decision(action, "按本回合计划继续", "plan", plan=plan_evidence.public_plan(memory.plan))
         if violations(state, d):
             memory.plan = []
             return None

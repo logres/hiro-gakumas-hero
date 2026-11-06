@@ -6,6 +6,7 @@ KAA 的考试判定依赖普通考试的排名文字模板，H.I.F 考试布局�
 数字用 KAA 自带的 ddddocr（原图放大 2 倍，单字也能读）；文字（本回合属性、倍率、突破线）用 Apple Vision。
 """
 
+import os
 import re
 from functools import cache, lru_cache
 from pathlib import Path
@@ -209,6 +210,21 @@ def _parse_attr(joined: str) -> dict:
     attr = next((v for k, v in ATTRS.items() if k in joined), None) or next((v for k, v in ATTR_TAILS.items() if k in joined), None)
     m = re.search(r"(\d+)\s*[%％]", joined)
     return {"attr": attr, "multiplier_pct": int(m.group(1)) if m else None}
+
+
+def _parsed_attr_with_scale_fallback(img: MatLike, text: str, cache: RegionCache | None) -> dict:
+    primary = _parse_attr(text)
+    if (os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") != "1"
+            or primary["multiplier_pct"] is not None or primary["attr"] is None):
+        return primary
+    # Historical flag name: Windows HUD recovery also permits scale 2, where
+    # observed % glyphs survive better than scale 1 or the default scale 3.
+    crop = _attr_crop(img)
+    secondary = cached(cache, "text:attr:scale2", crop,
+                       lambda: _parse_attr("".join(t for t, _ in ocr(crop, scale=2.0))))
+    if secondary["attr"] == primary["attr"] and secondary["multiplier_pct"] is not None:
+        return secondary
+    return primary
 
 
 BOX_MULT = (105, 82, 205, 120)  # 「2512%」数字行（BOX_ATTR 下半）
@@ -940,7 +956,7 @@ def _read_hif_exam(img: MatLike, cache: RegionCache | None) -> dict:
     drink_slots = read_drink_slots(img, cache=cache)
     out = {
         "remaining_turns": read_remaining_turns(img),
-        **_parse_attr(texts["attr"]),
+        **_parsed_attr_with_scale_fallback(img, texts["attr"], cache),
         "finals_round": None,  # 本战时由 read_finals_ranking 覆盖为 1 / 2
         **cached(cache, "ranking", img[y1:y2, x1:x2], lambda: read_ranking(img)),
         **(_parse_breakthrough(texts["break"]) if not finals else {"rank_line": None, "participants": None}),

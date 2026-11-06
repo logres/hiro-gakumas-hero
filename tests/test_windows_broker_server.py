@@ -1,6 +1,7 @@
 import http.client
 import json
 import io
+import errno
 import threading
 from email.message import Message
 
@@ -136,10 +137,19 @@ def test_local_http_auth_and_transport(session, headers, body, expected):
                 connection.request("POST", "/rpc", body, headers)
             except PermissionError:
                 pytest.skip("App sandbox blocks loopback connections")
-            response = connection.getresponse()
-            assert response.status == expected
-            assert response.getheader("Connection") == "close"
-            assert json.loads(response.read())["ok"] == (expected == 200)
+            try:
+                response = connection.getresponse()
+                assert response.status == expected
+                assert response.getheader("Connection") == "close"
+                assert json.loads(response.read())["ok"] == (expected == 200)
+            except OSError as exc:
+                # Rejecting Content-Length without consuming an oversized body
+                # can reset TCP before the 400 reaches a Windows client. Only
+                # this known rejection may close without an HTTP response.
+                oversized = expected == 400 and len(body.encode()) > MAX_BODY
+                reset = getattr(exc, "winerror", None) in (10053, 10054) or exc.errno == errno.ECONNRESET
+                if not (oversized and reset):
+                    raise
         finally:
             connection.close()
             thread.join(5)
@@ -169,4 +179,24 @@ def test_handler_without_network(session, authorization, origin, op, status):
     handler.reply = lambda *args: replies.append(args)
     handler.do_POST()
     assert replies[0][0] == status
+    assert session.device.inputs == []
+
+
+def test_oversized_handler_rejects_before_read_or_dispatch(session):
+    from types import SimpleNamespace
+    handler = object.__new__(BrokerHandler)
+    handler.path = "/rpc"
+    handler.headers = Message()
+    handler.headers["Authorization"] = "Bearer secret"
+    handler.headers["Content-Length"] = str(MAX_BODY + 1)
+
+    def unexpected(*args):
+        pytest.fail("Oversized request must not read its body or dispatch an operation")
+
+    handler.rfile = SimpleNamespace(read=unexpected)
+    handler.server = SimpleNamespace(session=SimpleNamespace(dispatch=unexpected), token="secret")
+    replies = []
+    handler.reply = lambda *args: replies.append(args)
+    handler.do_POST()
+    assert replies == [(400, {"ok": False, "error": "Invalid payload size"})]
     assert session.device.inputs == []

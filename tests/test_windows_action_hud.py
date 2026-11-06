@@ -4,11 +4,13 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.parametrize("enabled,points,growth", [
-    (False, 26, {"vo": 3.0, "da": 566.2, "vi": 558.0}),
-    (True, 260, {"vo": 34.3, "da": 56.2, "vi": 55.8}),
+@pytest.mark.parametrize("enabled,points,growth,vo_text", [
+    (False, 26, {"vo": 3.0, "da": 566.2, "vi": 558.0}, "34.3%"),
+    (True, 260, {"vo": 34.3, "da": 56.2, "vi": 55.8}, "34.3%"),
+    (True, 260, {"vo": None, "da": 56.2, "vi": 55.8}, "7 34.3%"),
+    (True, 260, {"vo": None, "da": 56.2, "vi": 55.8}, "34.3%7"),
 ])
-def test_action_hud_uses_opt_in_native_numeric_crops(monkeypatch, enabled, points, growth):
+def test_action_hud_uses_opt_in_native_numeric_crops(monkeypatch, enabled, points, growth, vo_text):
     from hiro.vision import action
 
     monkeypatch.delenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", raising=False)
@@ -17,7 +19,7 @@ def test_action_hud_uses_opt_in_native_numeric_crops(monkeypatch, enabled, point
     # Mark each real HUD crop so this tests the reader's field wiring and parser,
     # including fragmented P digits, without invoking any OCR model or device.
     image = np.zeros((1280, 720, 3), dtype=np.uint8)
-    native = {1: ["2", "60"], 2: ["34.3%"], 3: ["56.2%"], 4: ["55.8%"]}
+    native = {1: ["2", "60"], 2: [vo_text], 3: ["56.2%"], 4: ["55.8%"]}
     enlarged = {1: ["2", "6"], 2: [".3%", "-"], 3: ["56", "6", ".2%"], 4: ["5", "5", "8%"]}
     for mark, box in enumerate([action.POINTS_BOX, *action.GROWTH_BOXES.values()], 1):
         x1, y1, x2, y2 = box
@@ -29,6 +31,11 @@ def test_action_hud_uses_opt_in_native_numeric_crops(monkeypatch, enabled, point
         mark = int(crop[0, 0, 0])
         if mark in native:
             calls.append((mark, scale))
+            if enabled and mark > 1:
+                # A chevron on the old crop's left edge must be excluded before
+                # OCR, rather than guessing that a leading numeric digit is bad.
+                expected_box = list(action.WINDOWS_GROWTH_TEXT_BOXES.values())[mark - 2]
+                assert crop.shape[1] == expected_box[2] - expected_box[0]
             tokens = (native if scale == 1 else enlarged)[mark]
         else:
             tokens = []

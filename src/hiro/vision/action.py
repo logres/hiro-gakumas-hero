@@ -33,6 +33,8 @@ STAT_DIGITS_W = 112  # 四位数约 100px
 STAT_RIGHT_LIMIT = 590  # Vi 右边是「P手帳」
 CAP_BOXES = {"vo": (178, 718, 265, 748), "da": (320, 718, 406, 748), "vi": (462, 718, 548, 748)}
 GROWTH_BOXES = {"vo": (176, 750, 262, 780), "da": (312, 750, 404, 780), "vi": (456, 750, 548, 780)}
+# Exclude the colored double chevrons, which RapidOCR can read as a leading 7.
+WINDOWS_GROWTH_TEXT_BOXES = {"vo": (194, 750, 262, 780), "da": (336, 750, 404, 780), "vi": (478, 750, 548, 780)}
 STAR_BOX = (64, 686, 122, 718)
 STAMINA_BOX = (322, 50, 436, 94)
 POINTS_BOX = (330, 94, 440, 136)
@@ -182,7 +184,8 @@ def read_action_select(img: MatLike) -> ActionSelectState:
     stamina = read_stamina(img)
     # RapidOCR at 4x fragments these small HUD strings and drops digits / decimal
     # points (260 → 26, 55.8% → 558%). Native-size crops preserve the full text.
-    numeric_scale = 1 if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" else 4
+    native_numeric = os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
+    numeric_scale = 1 if native_numeric else 4
     points = re.search(r"\d+", "".join(t for t, _ in ocr(img[slice(*POINTS_BOX[1::2]), slice(*POINTS_BOX[::2])], scale=numeric_scale, languages=("en-US",))))
 
     def small_text(box) -> str:
@@ -194,7 +197,10 @@ def read_action_select(img: MatLike) -> ActionSelectState:
         # 「/3000」的斜杠常被认成 1（「13000」）；上限固定四位数，取最后四位
         digits = re.sub(r"\D", "", small_text(CAP_BOXES[a]).replace("O", "0"))
         caps[a] = int(digits[-4:]) if len(digits) >= 4 else None
-        g = re.search(r"(\d+(?:\.\d)?)\s*%", small_text(GROWTH_BOXES[a]))
+        growth_box = WINDOWS_GROWTH_TEXT_BOXES[a] if native_numeric else GROWTH_BOXES[a]
+        growth_text = small_text(growth_box)
+        pattern = r"(\d+(?:\.\d)?)\s*%"
+        g = re.fullmatch(pattern, growth_text.strip()) if native_numeric else re.search(pattern, growth_text)
         growth[a] = float(g.group(1)) if g else None
     advice = "".join(t for t, _ in ocr(img[slice(*ADVICE_BAND)], scale=2)) or None
     return ActionSelectState(

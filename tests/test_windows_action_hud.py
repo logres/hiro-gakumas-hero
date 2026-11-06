@@ -117,7 +117,7 @@ def test_windows_stamina_allows_only_complete_fraction_with_slash_overlap(monkey
     monkeypatch.setattr(action, "read_dddd", lambda *a: None)
     monkeypatch.setattr(action, "ocr", lambda *a, **k: calls.append(k["scale"]) or [(t, .99) for t in tokens])
     assert action.read_stamina(np.zeros((1280, 720, 3), dtype=np.uint8)) == expected
-    assert calls == ([1] if expected is not None else [1, 4])
+    assert calls == [1, 4]
 
 
 def test_windows_stamina_retries_overlapping_digits_without_guessing(monkeypatch):

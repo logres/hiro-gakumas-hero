@@ -110,6 +110,11 @@ def _reduce_fields(s: GameState, obs: Observation) -> None:
     for key, value in obs.fields.items():
         if value is None:
             continue
+        if obs.page.name == "DECK_LIST" and key in ("deck", "deck_size"):
+            deck = obs.fields.get("deck")
+            if (obs.fields.get("complete") is not True or not isinstance(deck, list)
+                    or obs.fields.get("deck_size") != len(deck) or not all(c.get("card_id") for c in deck)):
+                continue  # 未看全的牌组页不能覆盖已确认的牌组或张数
         if key == "exam_label":
             s.exam_session.label = str(value)
             continue
@@ -133,6 +138,8 @@ def _reduce_fields(s: GameState, obs: Observation) -> None:
             _note(s, f"seq {obs.seq}: {full} {old_src.origin}={old!r} vs {origin}={value!r}，采用 {origin}")
         target[key] = copy.deepcopy(value)
         s.sources[full] = Source(origin, obs.seq)
+        if obs.page.name == "DECK_LIST" and key in ("deck", "deck_size"):
+            s.field_status[full] = "verified"
     if section == "exam":
         _observe_turn(s, obs)
         _attr_permil(s, obs)

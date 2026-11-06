@@ -174,13 +174,19 @@ def read_stamina(img: MatLike) -> tuple[int, int] | None:
         # At native size 33/45 can instead overlap digits: ["33", "3/45"].
         # Do not edit those digits; retry the same crop enlarged, which lets the
         # detector recognize a single fraction, under the same strict checks.
+        fractions = []
         for scale in (1, 4):
-            text = "".join(t for t, _ in ocr(crop, scale=scale, languages=("en-US",))).replace(" ", "")
+            text = "".join(t for t, _ in ocr(crop, scale=scale, languages=("en-US",))).replace(" ", "").replace("／", "/")
             match = re.fullmatch(r"(\d+)/{1,2}(\d+)", text)
             if match:
                 cur, cap = map(int, match.groups())
                 if cap > 0 and cur <= cap:
-                    return cur, cap
+                    fractions.append((cur, cap))
+        # A syntactically valid short number can be truncated: on a real 26/45
+        # frame native OCR yields 2/45, while enlarged OCR yields 22/45. Require
+        # both scales to agree, otherwise independently reread numeric fields.
+        if len(fractions) == 2 and fractions[0] == fractions[1]:
+            return fractions[0]
         # If the fraction detector overlaps digits or loses the slash, read the
         # two numeric fields independently. Both slightly different crops of
         # each field must agree; no digits are corrected or taken from state.
@@ -191,7 +197,9 @@ def read_stamina(img: MatLike) -> tuple[int, int] | None:
         cur, cap = cur_votes[0], cap_votes[0]
         if cur is not None and cap is not None and cur_votes[1] == cur and cap_votes[1] == cap and cap > 0 and 0 <= cur <= cap:
             return cur, cap
-        return None
+        # One complete fraction can survive a detector-overlap failure at the
+        # other scale, but unresolved competing valid fractions are unknown.
+        return fractions[0] if len(fractions) == 1 and all(v is None for v in cur_votes + cap_votes) else None
     texts = []
     for scale in (4, 2):
         text = "".join(t for t, _ in ocr(crop, scale=scale, languages=("en-US",)))

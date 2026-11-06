@@ -619,6 +619,8 @@ class HiroHifStrategy(HifGrindStrategy):
         import json
 
         from hiro.contracts import Source
+        from hiro.loop.events import confirmed_deck_size
+        from hiro.loop.ledger import steps_of
 
         last, last_seq = None, 0
         for d in self._prior_trace_dirs():
@@ -640,7 +642,17 @@ class HiroHifStrategy(HifGrindStrategy):
         produce = {**last["produce"], **{k: v for k, v in (cur.produce or {}).items() if v is not None}}
         sources = {**{f"produce.{k}": Source("infer", last_seq) for k in last["produce"]}, **cur.sources}
         mode = cur.mode if cur.mode != "unknown" else last.get("mode", cur.mode)
-        self.s.state = replace(cur, produce=produce, sources=sources, mode=mode)
+        def history():
+            for trace_dir in self._prior_trace_dirs():
+                yield {"_segment_start": str(trace_dir)}
+                yield from steps_of([trace_dir])
+
+        size = confirmed_deck_size(history(), produce.get("deck"))
+        produce["deck_size"] = size  # 旧 trace 的数字若未由完整牌组 + 事件链核实，就不能沿用
+        field_status = dict(cur.field_status)
+        for field in ("produce.deck", "produce.deck_size"):
+            field_status[field] = "verified" if size is not None else "unknown"
+        self.s.state = replace(cur, produce=produce, sources=sources, mode=mode, field_status=field_status)
         self.s.trace.record_initial_state(self.s.state)
         p = last["produce"]
         self.s.note(f"续跑：用之前 trace 的最后状态打底（seq {last_seq}：P {p.get('produce_point')}、体力 {p.get('stamina')}/{p.get('max_stamina')}），"

@@ -11,9 +11,10 @@ reduce 本身仍是纯函数；Session.observe 依次调用 check → gate → r
 from __future__ import annotations
 
 import copy
+from collections import Counter
 from typing import Any
 
-from hiro.contracts import Check, Event, Expect, GameState, Observation, Prediction
+from hiro.contracts import Check, Event, Expect, GameState, Observation, Prediction, Source
 
 LEDGER_KEEP = 200  # GameState.ledger 只留最近 N 条，完整的在 trace
 
@@ -68,15 +69,23 @@ def _apply_deck(s: GameState, e: Event) -> None:
         return
     deck: list = prod["deck"]
     a = e.args
+    before_len = len(deck)
+    full = (s.field_status.get("produce.deck") in ("verified", "predicted")
+            and isinstance(prod.get("deck_size"), int) and prod["deck_size"] == len(deck))
+    changed = False
 
     def add(card_id, upgrade=0):
+        nonlocal changed
         if card_id:
             deck.append({"card_id": card_id, "upgrade": int(upgrade or 0)})
+            changed = True
 
     def remove(card_id):
+        nonlocal changed
         i = next((i for i, c in enumerate(deck) if c.get("card_id") == card_id), None)
         if i is not None:
             deck.pop(i)
+            changed = True
         elif card_id:
             s.pending_review.append("produce.deck") if "produce.deck" not in s.pending_review else None
 
@@ -94,11 +103,103 @@ def _apply_deck(s: GameState, e: Event) -> None:
     elif e.kind == "DECK_REVIEW" and a.get("deck") is not None:
         prod["deck"] = [{"card_id": c.get("card_id"), "upgrade": int(c.get("upgrade") or 0)} for c in a["deck"]]
         s.pending_review = [f for f in s.pending_review if f != "produce.deck"]
-        s.field_status["produce.deck"] = "verified"
+        complete = (e.confirmed is True and a.get("deck_size", len(prod["deck"])) == len(prod["deck"])
+                    and all(c.get("card_id") for c in prod["deck"]))
+        prod["deck_size"] = len(prod["deck"]) if complete else None
+        s.field_status["produce.deck"] = "verified" if complete else "pending"
+        s.field_status["produce.deck_size"] = "verified" if complete else "pending"
+        if complete:
+            s.sources["produce.deck"] = Source("review", e.seq)
+            s.sources["produce.deck_size"] = Source("review", e.seq)
     elif e.kind in ("CARD_AUTO_PROCESS", "UNMODELED_CHANGE") and "deck" in str(a.get("field", "deck")):
         if "produce.deck" not in s.pending_review:
             s.pending_review.append("produce.deck")
         s.field_status["produce.deck"] = "pending"
+        s.field_status["produce.deck_size"] = "pending"
+        prod["deck_size"] = None
+    card_event = e.kind in ("CARD_ACQUIRE", "SHOP_BUY", "CARD_DELETE", "CARD_CHANGE") and (e.kind != "SHOP_BUY" or a.get("card_id"))
+    if card_event:
+        complete_change = e.kind != "CARD_CHANGE" or bool(a.get("remove_card_id") and a.get("card_id") and len(deck) == before_len)
+        if (changed and complete_change and full
+                and (e.confirmed is True or (e.origin == "action" and e.ref.get("decision_seq") is not None))):
+            prod["deck_size"] = len(deck)
+            s.sources["produce.deck"] = Source("event", e.seq)
+            s.sources["produce.deck_size"] = Source("event", e.seq)
+            status = "verified" if e.confirmed is True else "predicted"
+            s.field_status["produce.deck"] = status
+            s.field_status["produce.deck_size"] = status
+        else:
+            prod["deck_size"] = None
+            s.field_status["produce.deck"] = "pending"
+            s.field_status["produce.deck_size"] = "pending"
+
+
+def confirmed_deck_size(steps, final_deck: list | None) -> int | None:
+    """Recover a count only from a complete review followed by recorded card events.
+
+    Action events must come from a successful execution. An observed event paired
+    with that action is the same acquisition and contributes no second delta.
+    """
+    owned = None
+    pending: Counter = Counter()
+    for step in steps:
+        if step.get("_segment_start"):
+            if pending:
+                owned = None  # 确认弹窗不能跨 trace 段靠重复的 seq 猜配对
+                pending.clear()
+            continue
+        for event in step.get("events") or []:
+            kind, args = event.get("kind"), event.get("args") or {}
+            if kind == "DECK_REVIEW":
+                deck = args.get("deck")
+                owned = (Counter(card["card_id"] for card in deck)
+                         if event.get("confirmed") is True and isinstance(deck, list)
+                         and args.get("deck_size", len(deck)) == len(deck)
+                         and all(isinstance(card, dict) and card.get("card_id") for card in deck) else None)
+                pending.clear()
+                continue
+            if kind in ("CARD_AUTO_PROCESS", "UNMODELED_CHANGE") and "deck" in str(args.get("field", "deck")):
+                owned = None
+                pending.clear()
+                continue
+            if kind not in ("CARD_ACQUIRE", "SHOP_BUY", "CARD_DELETE", "CARD_CHANGE") or owned is None:
+                continue
+            if kind == "SHOP_BUY" and not args.get("card_id"):
+                continue
+            key = _pair_key(to_event(event))
+            paired_seq = (event.get("ref") or {}).get("paired")
+            if event.get("origin") == "observed" and paired_seq is not None:
+                pair = (paired_seq, key)
+                if event.get("confirmed") is not True or pending[pair] <= 0:
+                    owned = None
+                    pending.clear()
+                else:
+                    pending[pair] -= 1
+                    if pending[pair] == 0:
+                        del pending[pair]
+                continue
+            action = event.get("origin") == "action"
+            trusted = (event.get("confirmed") is True or (action and (step.get("execution") or {}).get("ok") is True
+                       and (event.get("ref") or {}).get("decision_seq") is not None))
+            card_id = args.get("card_id")
+            old_id = args.get("remove_card_id") if kind == "CARD_CHANGE" else card_id
+            if not trusted or not card_id and kind != "CARD_DELETE" or not old_id and kind in ("CARD_DELETE", "CARD_CHANGE"):
+                owned = None
+                pending.clear()
+            elif kind in ("CARD_ACQUIRE", "SHOP_BUY"):
+                owned[card_id] += 1
+            elif owned[old_id] <= 0:
+                owned = None
+                pending.clear()
+            else:
+                owned[old_id] -= 1
+                if kind == "CARD_CHANGE":
+                    owned[card_id] += 1
+            if owned is not None and action and event.get("confirmed") is not True:
+                pending[(event.get("seq"), key)] += 1
+    final = (Counter(card.get("card_id") for card in final_deck)
+             if isinstance(final_deck, list) and all(isinstance(card, dict) and card.get("card_id") for card in final_deck) else None)
+    return sum(final.values()) if owned is not None and not pending and final is not None and +owned == final else None
 
 
 def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict, produce: dict | None, *, seq: int) -> list[Event]:

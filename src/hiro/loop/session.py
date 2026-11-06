@@ -158,6 +158,17 @@ class Session:
             event.ref["paired"] = other.seq
             event.confirmed = True
             self._events.append(event)  # 记进 trace，不再并入状态
+            if other.kind in ("CARD_ACQUIRE", "SHOP_BUY", "CARD_DELETE", "CARD_CHANGE"):
+                deck = (self.state.produce or {}).get("deck")
+                size = (self.state.produce or {}).get("deck_size")
+                pending = any(e.origin == "action" and e.confirmed is not True
+                              and e.kind in ("CARD_ACQUIRE", "SHOP_BUY", "CARD_DELETE", "CARD_CHANGE")
+                              for e in self.state.ledger)
+                if (not pending and "produce.deck" not in self.state.pending_review
+                        and self.state.field_status.get("produce.deck") == "predicted"
+                        and isinstance(deck, list) and size == len(deck)):
+                    self.state.field_status["produce.deck"] = "verified"
+                    self.state.field_status["produce.deck_size"] = "verified"
             return
         self._recent_events.append(event)
         del self._recent_events[:-20]

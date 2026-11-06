@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import time
+from unittest.mock import patch
 
 
 def main():
@@ -82,7 +83,31 @@ def main():
         assert frame.shape == (1280, 720, 3), frame.shape
         color = frame[500, 300].tolist()
         assert all(abs(a-b) <= 2 for a, b in zip(color, [20, 40, 220])), color
-        device.click(360, 640)
+        from kotonebot.interop.win import mouse as win_mouse
+        original_move, original_down, original_up = win_mouse.set_pos, win_mouse.down, win_mouse.up
+        events = []
+
+        def trace_move(*args, **kwargs):
+            original_move(*args, **kwargs)
+            events.append({"phase": "move", "requested_screen": list(args),
+                           "actual_screen": win32gui.GetCursorPos(),
+                           "client_origin": win32gui.ClientToScreen(state["hwnd"], (0, 0))})
+
+        def trace_button(phase, original, *args, **kwargs):
+            events.append({"phase": phase, "actual_screen": win32gui.GetCursorPos(),
+                           "client_origin": win32gui.ClientToScreen(state["hwnd"], (0, 0))})
+            original(*args, **kwargs)
+
+        state["geometry"] = {"client_rect": win32gui.GetClientRect(state["hwnd"]),
+                             "expected_screen": win32gui.ClientToScreen(state["hwnd"], (180,320)),
+                             "physical_resolution": tuple(device.scaler.physical_resolution),
+                             "converted_click": tuple(device.scaler.logic_to_physical((360,640)))}
+        with patch.object(win_mouse, "set_pos", trace_move), \
+             patch.object(win_mouse, "down", lambda *a, **k: trace_button("down", original_down, *a, **k)), \
+             patch.object(win_mouse, "up", lambda *a, **k: trace_button("up", original_up, *a, **k)):
+            device.click(360, 640)
+        state["events"] = events
+        print(json.dumps({"diagnostic": state}, ensure_ascii=False), flush=True)
         received = clicked.wait(5)
         assert received, {"error": "Target window did not receive mouse-up",
                           "cursor": win32gui.GetCursorPos(),

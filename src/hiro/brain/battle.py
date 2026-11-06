@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 from collections import Counter
 from dataclasses import asdict
 
@@ -23,7 +24,8 @@ class BattleBrain:
         self.profile = profile
         self.llm = llm
         self.max_retries = max_retries
-        prompts = ["exam.md"] + ([f"idols/{profile.playbook}.md"] if profile else [])
+        base = "exam_generic.md" if profile is None and os.environ.get("HIRO_EXPLICIT_IDOL_STATE") == "1" else "exam.md"
+        prompts = [base] + ([f"idols/{profile.playbook}.md"] if profile else [])
         self.system = load_prompt(*prompts)
         self.prompt_version = prompt_version(*prompts)
         self.calls: list[dict] = []  # 每次 LLM 调用的耗时与结果，写进记录

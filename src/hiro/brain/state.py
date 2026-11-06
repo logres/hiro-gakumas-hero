@@ -630,9 +630,18 @@ class BattleState:
     def action_budget(self) -> dict:
         """本回合还能打几张：耗行动的牌最多 actions_left 张；自带使用数追加 / 触发固有道具的牌不减行动（代码计算，不交给 LLM 猜）。
         第八局 R2 最后一回合：LLM 以为 ゆめみごこち+ → 紙吹雪+ → 届いて！+ 三张都能打，实际只够两张，届いて！+ 没打出去。"""
-        n = self.actions_left if self.actions_left is not None else 1
         free = [c.name for c in self.hand if c.available and self.gives_action(c)]
         costly = [c.name for c in self.hand if c.available and not self.gives_action(c)]
+        from hiro.brain.route_policy import explicit_route_enabled
+        if explicit_route_enabled():
+            return {"estimated_actions_left": self.actions_left,
+                    "returns_actions_after_play": free,
+                    "consumes_action_without_known_refund": costly,
+                    "basis": "Memory estimate and catalog tags/known item rules; not verification of customized effects or current costs.",
+                    "ordering_note": "返还行动的牌也先使用一次行动，不能保证在行动耗尽后打出。"
+                                     "最后一次不返还行动的出牌可能立即结束回合；有效的返还行动牌应在此前比较。"
+                                     "预算未知不补成1；估算与当前可用性冲突时保留不确定性。"}
+        n = self.actions_left if self.actions_left is not None else 1
         return {"耗行动的牌还能打": n, "不耗行动的牌": free or None, "耗行动的牌": costly or None,
                 "说明": (f"耗行动的牌里只能再打 {n} 张" + ("，先打不耗行动的牌" if free else "")) if costly and len(costly) > n else None}  # fmt: skip
 

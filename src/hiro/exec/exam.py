@@ -1019,6 +1019,44 @@ def _plugin(kind: str):
     return plugins.get(kind)
 
 
+def _detail_state_facts(img):
+    """Compare observed game facts, excluding OCR confidence and moving scenery."""
+    from hiro.vision.hif import is_hif_exam, read_hif_exam
+    from hiro.vision.observe import battle_observation
+
+    if not is_hif_exam(img):
+        return None
+    raw = read_hif_exam(img, cache=None)
+    facts = battle_observation(raw)
+    if any(facts.get(k) is None for k in ("remaining_turns", "hp", "genki")):
+        return None
+    facts.update({k: raw.get(k) for k in ("attr", "multiplier_pct", "pitem_charges")})
+    return facts
+
+
+def _review_current_card_details(state, frame, rec):
+    """Optional read-only inspection; never reuse effects after another action."""
+    if os.environ.get("HIRO_EXAM_CARD_DETAILS") != "1":
+        return
+    from hiro.brain.card_effect_evidence import attach_card_effect_context
+    from hiro.exec.card_detail_review import image_sha256, review_exam_hand_details
+
+    facts = _detail_state_facts(frame.img)
+    if facts is None:
+        rec.log("exam_card_details_unavailable", reason="initial_state_unverified")
+        return
+    result = review_exam_hand_details(
+        frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,
+        same_state=lambda image: _detail_state_facts(image) == facts,
+        on_detail=lambda image, evidence: rec.log("exam_card_detail", image=image, evidence=evidence))
+    rec.log("exam_card_detail_review", image=result.image, restored=result.restored,
+            evidence=result.evidence, problems=result.problems)
+    if not result.restored:
+        raise RuntimeError("Card detail inspection did not restore the original exam; no battle input sent")
+    state.public_info = attach_card_effect_context(
+        state.public_info, state.hand, result.evidence, snapshot_sha256=image_sha256(frame.img))
+
+
 def run_exam(
     brain: BattleBrain,
     exam: str,
@@ -1126,6 +1164,7 @@ def run_exam(
                 animating = True
                 continue
             wait_state.reset()
+            _review_current_card_details(state, frame, rec)
             last_state = state
             obs = session.last if session is not None else None
             # ---- 决策（插件）

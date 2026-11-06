@@ -147,7 +147,7 @@ def _stage1_mark(marks: list, index: int):
     return next((m for m in row if abs(m.rect.x1 - CHANGE1_MARK_X[index]) <= CHANGE1_COL_TOL), None)
 
 
-def change_stage1(self, index: int = 0, cancel: bool = False) -> bool:
+def change_stage1(self, index: int = 0, cancel: bool = False, strict: bool = False, expected_card_id: str | None = None) -> bool:
     """换卡阶段 1：点第 index 张候选新卡（从左到右）→ 次へ，直到出现阶段 2。返回是否到了阶段 2。
 
     阶段 1 没有「キャンセル」：KAA 参考图 dialog_card_change_1.png 底部只有「カード除去 / 次へ / 再抽選」（授業的セレクトチェンジ
@@ -158,20 +158,42 @@ def change_stage1(self, index: int = 0, cancel: bool = False) -> bool:
     if cancel:
         logger.info("换卡阶段 1：决策不换，但阶段 1 没有取消键——照常进入阶段 2，在阶段 2 取消")
     deadline = time.monotonic() + CHANGE_STAGE_TIMEOUT
+    strict_selected = False
     while time.monotonic() < deadline:
         device.screenshot()
         if R.InProduce.DialogCardChange2.Title.exists():
-            return True
-        if R.InProduce.DialogCardChange1.ButtonNext.q(enabled=True).try_click():
+            return not strict or strict_selected
+        if strict and strict_selected:
+            from hiro.vision.deck import read_change_candidates
+            current = read_change_candidates(device.screenshot())
+            selected = next((c for c in current.get("candidates") or []
+                             if c.get("index") == current.get("selected")), None)
+            if (not selected or selected.get("card_id") != expected_card_id
+                    or abs(selected["center"][0] - (CHANGE1_MARK_X[index] + 10)) > CHANGE1_COL_TOL):
+                logger.warning("严格换卡点击后未确认目标列实际选中，保留页面等待")
+                return False
+        if (not strict or strict_selected) and R.InProduce.DialogCardChange1.ButtonNext.q(enabled=True).try_click():
             logger.info("换卡阶段 1：已点「次へ」")
             time.sleep(CHANGE_POLL)
             continue
+        if strict and strict_selected:
+            time.sleep(CHANGE_POLL)
+            continue  # Wait for Next; do not toggle an already verified selection.
         marks = find_card_marks(CHANGE_LETTERS_BOX, CHANGE_LETTER_THRESHOLD)
         target = _stage1_mark(marks, index) if marks else None
         if target is not None:
             img = device.screenshot()
+            if strict:
+                from hiro.vision.deck import read_change_candidates
+                observed = read_change_candidates(img).get("candidates") or []
+                same = [c for c in observed if c.get("card_id") == expected_card_id
+                        and c.get("center") and abs(c["center"][0] - (CHANGE1_MARK_X[index] + 10)) <= CHANGE1_COL_TOL]
+                if len(same) != 1:
+                    logger.warning("严格换卡候选已变化/未确认，等待")
+                    return False
             _change_run().snap(img, "stage1")
             device.click(target)
+            strict_selected = True
             logger.info("换卡阶段 1：换入第 %d 张候选「%s」（找到 %d 个角标）", index, _mark_card_name(img, target), len(marks))
         elif marks:
             logger.info("换卡阶段 1：第 %d 列的候选角标没找到（找到 %d 个），等下一帧", index, len(marks))
@@ -201,11 +223,17 @@ def protected_card_ids() -> set[str]:
 
 
 def pick_change_target(cards: list[dict], index: int = 0, card_id: str | None = None, protected: set[str] | None = None,
-                       remove_index: int | None = None, remove_upgrade: int | None = None):  # fmt: skip
+                       remove_index: int | None = None, remove_upgrade: int | None = None, strict: bool = False):  # fmt: skip
     """阶段 2 卡格里选要换掉的卡。返回 (卡, 说明)；不该换 / 认不出时卡为 None。
     同一 card_id 有多张（强化次数不同）时按决策的 remove_index（read_card_dialog 的格子序号）/ remove_upgrade 选：
     第十九局 R1 牌组里 えいえいおー +1 / 0 / 0，决策要换第三张没强化的（index 10、upgrade 0），只按 card_id 点到了 +1 那张。"""
     protected = protected_card_ids() if protected is None else protected
+    if strict:
+        same = [c for c in cards if c.get("card_id") == card_id and c.get("upgrade") == remove_upgrade]
+        if (not card_id or card_id in protected or type(remove_upgrade) is not int or len(same) != 1
+                or same[0].get("customized") or same[0].get("dimmed")):
+            return None, "严格换卡目标未知、重复、不可换或受保护"
+        return same[0], "严格匹配唯一 card_id + upgrade"
     if card_id:
         same = [c for c in cards if c.get("card_id") == card_id]
         if not same:
@@ -290,7 +318,7 @@ def _mark_card_name(img, mark) -> str:
 
 
 def change_stage2(self, index: int = 0, card_id: str | None = None, cancel: bool = False, remove_index: int | None = None,
-                  remove_upgrade: int | None = None) -> bool:  # fmt: skip
+                  remove_upgrade: int | None = None, strict: bool = False) -> bool:  # fmt: skip
     """换卡阶段 2：选被换掉的原卡 → チェンジ → 确认。认不出 / 只剩保护卡时点キャンセル，返回 False；画面不在阶段 2 也返回 False。
 
     阶段 2 点「キャンセル」之后去哪：没有实机帧，[推断] 回到阶段 1（换入候选的选择页）。理由：阶段 1 没有取消键，セレクトチェンジ
@@ -316,8 +344,8 @@ def change_stage2(self, index: int = 0, card_id: str | None = None, cancel: bool
         time.sleep(CHANGE_POLL)
     run.snap(img, "stage2-deck")
     target, why = (None, "决策判定不换") if cancel else pick_change_target(dialog["cards"], index, card_id, remove_index=remove_index,
-                                                                         remove_upgrade=remove_upgrade)  # fmt: skip
-    if target is None and not cancel and card_id and not any(c.get("card_id") == card_id for c in dialog["cards"]):
+                                                                         remove_upgrade=remove_upgrade, strict=strict)  # fmt: skip
+    if target is None and not cancel and card_id and not any(c.get("card_id") == card_id and (not strict or c.get("upgrade") == remove_upgrade) for c in dialog["cards"]):
         # 牌组一屏放不下、目标不在这一屏（决策按整副选的）：往下、再往上翻屏找同 card_id + 强化次数的那张
         from hiro.vision.deck import dialog_scroll
 
@@ -330,8 +358,8 @@ def change_stage2(self, index: int = 0, card_id: str | None = None, cancel: bool
                     time.sleep(CARD_OP_SCROLL_SETTLE)
                     img = device.screenshot()
                     dialog = read_card_dialog(img, CHANGE2_CARD_AREA)
-                    target, why = pick_change_target(dialog["cards"], index, card_id, remove_upgrade=remove_upgrade)
-                    if target is not None or any(c.get("card_id") == card_id for c in dialog["cards"]):
+                    target, why = pick_change_target(dialog["cards"], index, card_id, remove_upgrade=remove_upgrade, strict=strict)
+                    if target is not None or any(c.get("card_id") == card_id and (not strict or c.get("upgrade") == remove_upgrade) for c in dialog["cards"]):
                         break
                     ids = [(c.get("card_id"), c.get("upgrade")) for c in dialog["cards"]]
                     if ids == seen or (not down and dialog_scroll(img, CHANGE2_CARD_AREA).get("at_top")):
@@ -341,6 +369,9 @@ def change_stage2(self, index: int = 0, card_id: str | None = None, cancel: bool
                     why += "（翻屏找到）"
                     break
             run.snap(img, "stage2-scrolled")
+    if target is None and strict:
+        logger.warning("严格换卡目标未确认：%s，保留页面等待", why)
+        return False
     if target is None:
         logger.warning("换卡阶段 2：%s，不换，点「キャンセル」（卡格 %s）", why, [c.get("name") for c in dialog["cards"]])
         device.click(*CHANGE_CANCEL_TAP)
@@ -353,6 +384,9 @@ def change_stage2(self, index: int = 0, card_id: str | None = None, cancel: bool
     run.snap(device.screenshot(), "stage2-picked")
     sel = picked.get("selected_card") or {}
     chosen, chosen_up = sel.get("card_id"), sel.get("upgrade")
+    if strict and (chosen != target["card_id"] or chosen_up != target.get("upgrade")):
+        logger.warning("严格换卡选中结果未准确确认，保留页面等待")
+        return False
     if chosen and (chosen != target["card_id"] or (target.get("upgrade") is not None and chosen_up is not None and chosen_up != target["upgrade"])):
         logger.warning("换卡阶段 2：选中的是 %s（强化 %s），不是要换的 %s（强化 %s），点「キャンセル」", chosen, chosen_up, target["card_id"],
                        target.get("upgrade"))  # fmt: skip

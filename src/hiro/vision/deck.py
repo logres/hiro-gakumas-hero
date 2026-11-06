@@ -707,6 +707,12 @@ def read_change_candidates(img: MatLike) -> dict:
         m = re.search(r"あと(\d+)回", "".join(t for t, b in boxes if xr[0] <= (b[0] + b[2]) // 2 <= xr[1]))
         return int(m.group(1)) if m else None
 
+    # Same orange corner cursor as card dialogs; ambiguity remains unknown.
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hot = [c["index"] for c in cands if _cursor_px(hsv, (c["center"][0] - CHANGE1_CELL // 2,
+            c["center"][1] - CHANGE1_CELL // 2, CHANGE1_CELL, CHANGE1_CELL))
+            >= CURSOR_MIN_PX_118 * (CHANGE1_CELL / 118) ** 2]
+    selected = hot[0] if len(hot) == 1 else None
     complete = len(cands) == 3 and all(c["card_id"] and c["upgrade"] is not None for c in cands)
-    return {"candidates": cands, "recommended": next((c["index"] for c in cands if c["recommended"]), None),
+    return {"selected": selected, "candidates": cands, "recommended": next((c["index"] for c in cands if c["recommended"]), None),
             "excludes_left": left_count((0, 260)), "rerolls_left": left_count((460, 720)), "complete": complete}  # fmt: skip

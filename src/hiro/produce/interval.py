@@ -128,6 +128,10 @@ def _clear_recover_dialog(r: Run, *, accept: bool) -> bool | None:
     if not _recover_dialog(boxes):
         return None
     r.snap(img, "stale-recover-dialog")
+    if find_text(boxes, ("ジュエル",)) is not None:
+        btn = find_text(boxes, ("キャンセル",), region=DIALOG_BUTTONS) or (220, 1160)
+        r.tap(btn)
+        return False
     btn = find_text(boxes, ("回復する",) if accept else ("キャンセル",), region=DIALOG_BUTTONS)
     if btn is None:
         btn = (500, 1160) if accept else (220, 1160)
@@ -198,17 +202,28 @@ def _recover(r: Run, info: dict | None, target_hp: int | None = None) -> Executi
         return (hp0 is not None and hp is not None and hp[0] > hp0[0]) or (p0 is not None and p is not None and p < p0)
 
     last = [r.clock() - SKIP_EVERY]
+    jewel = [False]
 
     def confirm(im):
         if r.clock() - last[0] < SKIP_EVERY:
             return
-        if btn := find_text(r.ocr(im), RECOVER_CONFIRM, region=DIALOG_BUTTONS):
+        boxes = r.ocr(im)
+        if find_text(boxes, ("ジュエル",)) is not None:
+            jewel[0] = True
+            r.tap(find_text(boxes, ("キャンセル",), region=DIALOG_BUTTONS) or (220, 1160))
+            last[0] = r.clock()
+            return
+        if jewel[0]:
+            return
+        if btn := find_text(boxes, RECOVER_CONFIRM, region=DIALOG_BUTTONS):
             r.snap(im, "confirm")
             r.tap(btn)
             last[0] = r.clock()
 
     ok, img = r.until(recovered, SETTLE_TIMEOUT, tick=confirm)
     r.snap(img, "back")
+    if jewel[0]:
+        return r.result(False, "回復確認にジュエルがあるためキャンセル", page_after=PAGE)
     if not ok:
         return r.result(False, f"点「回復」后 {SETTLE_TIMEOUT:.0f}s 内体力没增加、P 点也没减少（体力 {hp0}，P {p0}）",
                         page_after=PAGE if shop.consult_idle(img) else None)  # fmt: skip
@@ -313,7 +328,11 @@ def execute_interval(
         return shop._reroll(r, "interval", interval.get("refresh"))
     if (comm := shop.clear_comm_error(r)) is not None:
         return comm
-    stale = _clear_recover_dialog(r, accept=is_recover)
+    from hiro.brain.mechanism_interval import enabled as mechanism_interval_enabled
+
+    stale = _clear_recover_dialog(r, accept=is_recover and not mechanism_interval_enabled())
+    if stale is not None and is_recover and mechanism_interval_enabled():
+        return r.result(False, "残留回复确认框已取消，重新观测后再决定", page_after=PAGE)
     if stale is not None and is_recover:  # 想回体力、正好停在它的确认框上：点了「回復する」就是这一步
         return r.result(bool(stale), None if stale else "「体力回復確認」点了「回復する」没关掉", page_after=PAGE)
     if action.kind is ActionKind.INTERVAL_END and not on_interval(r.shoot(), r.ocr):
@@ -389,8 +408,11 @@ def interval_loop(
     status: Callable[[], tuple] = screen_status,
     max_steps: int = 12,
     hp_target: Callable[[int], int] | None = None,
+    implicit_recovery: bool = True,
 ) -> bool:
-    """轮间：observe → decide → execute，一步一步，直到决策给 IntervalEnd；离开前一定先回体力。返回是否已离开轮间。
+    """轮间：observe → decide → execute，返回是否已离开轮间。
+
+    implicit_recovery=False 时只执行显式消费，不沿用旧货架、不在收尾自动回血。
 
     第八局 main8 -r2 #95–101：买过的第 0 格识别没刷新（连续 4 帧缺 interval 字段，沿用的旧字段里它还是 purchased=false），
     决策又去买它，执行失败后整个轮间直接结束——体力 18/33 没回、395P 没花。现在：
@@ -409,7 +431,7 @@ def interval_loop(
         pf = dict(observe() or {})
         if pf.get("interval"):
             last_iv = pf["interval"]
-        elif last_iv is not None:
+        elif last_iv is not None and implicit_recovery:
             pf["interval"] = last_iv
             logger.info("轮间 第 %d 步：本帧缺 interval 字段，沿用上一次的", step + 1)
         blocked = {i for i, n in fails.items() if n >= MAX_BUY_FAILS}
@@ -454,6 +476,12 @@ def interval_loop(
         logger.warning("轮间 第 %d 步 %s 失败（%s），重新观测后继续", step + 1, action, res.error)
         if streak >= MAX_FAIL_STREAK:
             break
+    if not implicit_recovery:
+        # Generic policy owns every purchase; ending must not trigger legacy HP spending.
+        end = execute(Action(ActionKind.INTERVAL_END), {})
+        if record:
+            record(None, end)
+        return end.ok
     return finish_interval(execute, status, record, hp_target)
 
 

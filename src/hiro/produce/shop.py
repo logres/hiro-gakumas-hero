@@ -154,6 +154,9 @@ def _buy(r: Run, item: dict, purchased, confirm_reader=_read_dialog) -> Executio
     r.snap(img, "confirm")
     if not ok:
         return r.result(False, f"点「交換する」后 {DIALOG_TIMEOUT:.0f}s 内没出现「交換確認」弹窗")
+    if find_text(r.ocr(img), ("ジュエル",)) is not None:
+        r.tap(CANCEL_TAP)
+        return r.result(False, "交換確認にジュエルがあるためキャンセル", page_after=PAGE)
     if confirm_reader is not None and (item.get("card_id") or item.get("drink_id")):
         if why := dialog_mismatch(item, confirm_reader(img)):
             r.tap(CANCEL_TAP)

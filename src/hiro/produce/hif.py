@@ -799,6 +799,13 @@ class HiroHifStrategy(HifGrindStrategy):
     def _event_page(self, page: str, commit_index, n_options: int | None = None):
         t0 = time.monotonic()
         obs = self.s.observe(scene=page)
+        if page == "STUDY" and os.environ.get("HIRO_MECHANISM_CHANGE") == "1":
+            from hiro.produce.study_preview import collect
+
+            try:
+                obs = collect(self.s, obs, device.click, sleep)
+            except ValueError as exc:
+                self._stop(page, str(exc), obs=self.s.last)
         kaa_n = n_options
         choices = self.s.state.page_fields.get("choices") or []
         if n_options is not None and len(choices) > n_options:
@@ -1108,16 +1115,22 @@ class HiroHifStrategy(HifGrindStrategy):
             obs = self.s.observe(scene="SKILL_CARD_CHANGE_1")
             d = self.deciders.decide("SKILL_CARD_CHANGE_1", self.s.state)
             args = d.action.args if d.action.kind is ActionKind.CHANGE_CARD else {}
+            if d.decider == "mechanism_change" and d.action.kind is not ActionKind.CHANGE_CARD:
+                self._stop("SKILL_CARD_CHANGE_1", d.reason, obs=obs, decision=d)
+                return
             cancel = bool(args.get("cancel"))
             pick = int(args.get("pick_index") or 0)
             if d.action.kind is not ActionKind.CHANGE_CARD:
                 d.warnings.append("候选未识别，换入第 0 张（阶段 2 仍按决策换出 / 取消）")
-            pick = self._stage1_column(pick, d)
-            ok = ctx.commit_stage1(pick)  # 自带轮询到阶段 2；不走 _act 的重复点击
+            pick = args["pick_column"] if args.get("strict") else self._stage1_column(pick, d)
+            ok = ctx.commit_stage1(pick, **({"strict": True, "expected_card_id": args["incoming_card_id"]} if args.get("strict") else {}))  # 自带轮询到阶段 2；不走 _act 的重复点击
             result = self.s.verify(d.action, page_before="SKILL_CARD_CHANGE_1", taps=[], retries=0)
             if ok is False:
                 result = replace(result, ok=False, error="阶段 1 超时没进入阶段 2")
             self.s.record(obs, decision=d, execution=result, timings_ms={"total": (time.monotonic() - t0) * 1000})
+            if args.get("strict") and ok is False:
+                self._stop("SKILL_CARD_CHANGE_1", "严格换卡阶段1未确认完成，保留页面", obs=obs, decision=d)
+                return
         t0 = time.monotonic()
         from hiro.vision.scene import classify_current
 
@@ -1158,6 +1171,9 @@ class HiroHifStrategy(HifGrindStrategy):
                     break
         scanned = self._scan_change_deck()
         d = self.deciders.decide("SKILL_CARD_CHANGE_2", self.s.state)
+        if d.decider == "mechanism_change" and d.action.kind is not ActionKind.CHANGE_CARD:
+            self._stop("SKILL_CARD_CHANGE_2", d.reason, obs=obs, decision=d)
+            return
         args = d.action.args if d.action.kind is ActionKind.CHANGE_CARD else {"cancel": True}
         if cancel:
             d.warnings.append("阶段 1 决策已判定不换，阶段 2 取消")
@@ -1189,7 +1205,7 @@ class HiroHifStrategy(HifGrindStrategy):
         card_id = None if cancel else args.get("remove_card_id")
         # 整副扫描过（多屏）时 remove_index 是牌组序号、不是这一屏的格子号：只按 card_id + 强化次数找（翻屏）
         changed = ctx.commit_stage2(0, card_id=card_id, cancel=cancel, remove_index=None if cancel or scanned else args.get("remove_index"),
-                                    remove_upgrade=None if cancel else args.get("remove_upgrade"))  # 自带确认框处理；取消 / 不符时点キャンセル 返回 False  # fmt: skip
+                                    remove_upgrade=None if cancel else args.get("remove_upgrade"), **({"strict": True} if args.get("strict") else {}))  # 自带确认框处理；取消 / 不符时点キャンセル 返回 False  # fmt: skip
         result = self.s.verify(d.action, page_before="SKILL_CARD_CHANGE_2", taps=[], retries=0)
         result = replace(result, ok=bool(changed) or cancel, error=None if changed or cancel else "换卡未完成（见 kaa_patches 日志与 stage2 帧）")
         self.s.record(obs, decision=d, execution=result, timings_ms={"total": (time.monotonic() - t0) * 1000})
@@ -1364,8 +1380,11 @@ class HiroHifStrategy(HifGrindStrategy):
 
         from hiro.produce.interval import execute_interval
 
+        from hiro.brain.mechanism_interval import enabled as mechanism_interval_enabled
+
         execute = partial(execute_interval, deck_size=self._deck_size())
-        if interval_loop(observe, decide, record, execute=execute, max_steps=self.MAX_INTERVAL_STEPS, hp_target=target, status=status):
+        if interval_loop(observe, decide, record, execute=execute, max_steps=self.MAX_INTERVAL_STEPS, hp_target=target, status=status,
+                         implicit_recovery=not (mechanism_interval_enabled() and not self.deciders._uses_yaruki_policy(self.s.state))):
             return
         self.s.recover("tap_no_effect", "轮间结束失败，交回 KAA 结束")
         ctx.end()  # 兜底：执行器结束不了时用 KAA 的结束流程

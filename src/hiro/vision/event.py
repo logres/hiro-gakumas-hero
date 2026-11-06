@@ -17,13 +17,13 @@ from cv2.typing import MatLike
 
 from hiro.vision.ocr import ocr_boxes
 
-REGION = (75, 470, 720, 950)  # 左边界避开行首图标（会被读成「2」并吃掉首字）
+REGION = (75, 445, 720, 950)  # 四行效果框上移；左边界避开选项行首图标
 ROW_Y = (698, 799, 901)
 ROW_HALF = 26  # 选项文字行的半高
 BADGE = (-56, -22)  # 角标相对行中心的 y 范围
 TEXT_X = (70, 560)  # 选项文字的 x 范围（左边是图标，右边是「>>」）
 BADGE_X = 520
-EFFECT_Y = (480, 640)  # 选中后的效果说明
+EFFECT_Y = (445, 640)  # 三行/四行效果框，含四行框上移后的参数增益首行
 SELECTED_SAT = 100  # 选中行饱和度：授業 118–166、外出 129–141；未选 ≤ 70
 SELECTED_LEAD = 40
 

@@ -53,6 +53,29 @@ def _study(decider, state, identity: str | None) -> Decision:
     if not label or not plan or name not in plan:
         return _wait(page, "非やる気路线：当前偶像的推荐效果没有可靠主数据")
 
+    from hiro.brain.mechanism_change import enabled as change_enabled, readiness
+
+    if change_enabled() and any(c.get("preview_seq") for c in valid):
+        produce = state.produce or {}
+        stamina = produce.get("stamina")
+        matching = []
+        for choice in valid:
+            effect = "".join(str(choice.get("effect") or "").split())
+            cost = choice.get("cost_hp")
+            if (type(choice.get("preview_seq")) is not int or not effect or choice.get("trouble")
+                    or type(cost) is not int or cost < 0 or choice.get("cost_p") not in (None, 0)
+                    or (cost > 0 and (type(stamina) is not int or stamina < cost))):
+                continue
+            if label not in effect:
+                continue
+            if "セレクトチェンジ" in effect and (getattr(decider, "llm", None) is None or not readiness(state, identity)):
+                continue
+            matching.append(choice)
+        if len(matching) == 1:
+            return _decision(Action.event_select(matching[0]["index"]),
+                             f"逐项预览确认 {label} 机制档、体力可付且无麻烦牌代价；换卡由成对比较执行", page, .8)
+        return _wait(page, "授業预览无法确定唯一可执行的推荐机制档")
+
     from hiro.brain.deciders import CHANGE_STUDY_DAYS
 
     produce = state.produce or {}
@@ -131,6 +154,10 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
     if page == "SKILL_CARD_REMOVAL":
         return _decision(Action(ActionKind.REMOVE_CARD, {"cancel": True}),
                          "非やる気路线：旧删卡顺序可能删除当前路线核心，取消", page)
+    if page in ("SKILL_CARD_CHANGE_1", "SKILL_CARD_CHANGE_2"):
+        from hiro.brain.mechanism_change import compare, enabled
+        if enabled():
+            return compare(decider, state, identity, 1 if page.endswith("_1") else 2)
     if page == "SKILL_CARD_CHANGE_2":
         return _decision(Action(ActionKind.CHANGE_CARD, {"cancel": True}),
                          "非やる気路线：不按旧价值表换出卡，取消换卡", page)
@@ -144,6 +171,9 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
     if page == "SPECIAL_GUIDANCE":
         return _decision(Action(ActionKind.CUSTOMIZE_END), "非やる気路线：尚无适用的特別指導定制规则，结束", page)
     if page == "HIF_ROUND_INTERVAL":
+        from hiro.brain.mechanism_interval import compare, enabled
+        if enabled():
+            return compare(decider, state, identity)
         return _decision(Action(ActionKind.INTERVAL_END), "非やる気路线：轮间购买规则未适配，暂结束；补卡要求待实机确认", page)
     if page == "STUDY":
         return _study(decider, state, identity)

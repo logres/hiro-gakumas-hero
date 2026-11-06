@@ -274,3 +274,49 @@ def test_complete_duration_preserves_original_confidence_requirement():
 def test_unknown_internal_font_glyph_cannot_be_dropped_to_make_short_number():
     assert status._font_digit_sequence([(0,10,20,"2"),(12,10,20,None),(24,10,20,"0")]) is None
     assert status._font_digit_sequence([(0,10,20,"2"),(12,10,20,"0")]) == 20
+
+
+@pytest.mark.parametrize("other_score,expected",[(.60,True),(.79,False)])
+def test_blue_fallback_compares_different_base_ids_not_character_art(monkeypatch,other_score,expected):
+    from types import SimpleNamespace
+    monkeypatch.setattr(status,"_card_index",lambda:(["a-art1","a-art2","b-art"],np.array([[.85],[.84],[other_score]])))
+    monkeypatch.setattr(status,"_slot",lambda *args:None)
+    monkeypatch.setattr(status,"_inner",lambda _:None)
+    monkeypatch.setattr(status,"_norm",lambda _:np.ones(1))
+    monkeypatch.setattr(status,"_card_from_asset",lambda asset:SimpleNamespace(_id=asset[0],name="known"))
+    monkeypatch.setattr(status,"_value",lambda *args:(None,None))
+    result=status._high_confidence_enchant(np.zeros((1,1,3),np.uint8),2)
+    assert bool(result) is expected
+    if expected:
+        assert result["card_id"]=="a" and result["margin"]==.25
+
+
+@pytest.mark.parametrize("ratio,enabled,known",[(.079,True,True),(.089,True,True),(.089,False,False)])
+def test_blue_color_threshold_does_not_hide_verified_art_with_flag(monkeypatch,ratio,enabled,known):
+    from types import SimpleNamespace
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1" if enabled else "0")
+    image=np.zeros((100,100,3),np.uint8)
+    blue=cv2.cvtColor(np.uint8([[[100,255,255]]]),cv2.COLOR_HSV2BGR)[0,0]
+    image.reshape(-1,3)[:round(ratio*10000)]=blue
+    monkeypatch.setattr(status,"_slot",lambda *args:image)
+    monkeypatch.setattr(status,"_icon_index",lambda:({},{}))
+    monkeypatch.setattr(status,"match_status_icon",lambda *args:[(.53,"unknown"),(.50,"other")])
+    monkeypatch.setattr(status,"match_enchant_card",lambda *args:(.85,"art"))
+    monkeypatch.setattr(status,"_card_from_asset",lambda _:SimpleNamespace(_id="card",name="permanent"))
+    monkeypatch.setattr(status,"_value",lambda *args:(None,None))
+    monkeypatch.setattr(status,"_high_confidence_enchant",lambda *args:{"kind":"enchant","card_id":"card","name":"permanent"})
+    result=status._read_slot(image,2)
+    assert (result.get("card_id")=="card") is known
+
+
+def test_local_r26_color_branch_keeps_permanent_card(monkeypatch):
+    base=Path(__file__).resolve().parents[1]/"reports/runs/20261107-073727/frames"
+    if not base.exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    for seq in (5,7,9):
+        rows=status.read_status_column(cv2.imread(str(base/f"{seq:05d}-exam_card_detail_state_changed.png")),cache=None)
+        assert rows[2]["card_id"]=="p_card-02-ido-3_019"
+        assert rows[2]["name"]=="もう怖くないから"
+        assert rows[2]["score"]>=.8

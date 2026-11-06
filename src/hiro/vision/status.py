@@ -145,6 +145,38 @@ def match_enchant_card(img: MatLike, k: int) -> tuple[float, str]:
     return float(scores[i, j]), keys[i]
 
 
+def _high_confidence_enchant(img: MatLike, k: int) -> dict | None:
+    """Confirm art independently when blue scenery fooled the color branch."""
+    keys, matrix = _card_index()
+    if not keys:
+        return None
+    vecs = np.stack([_norm(_inner(_slot(img,k,half,dy)))
+                     for half in (24,26,28) for dy in (-3,0,3)],axis=1)
+    scores = (matrix @ vecs).max(axis=1)
+    ranked = sorted(zip(scores,keys),reverse=True)
+    score, asset = ranked[0]
+    if score < 0.8:
+        return None
+    card = _card_from_asset(asset)
+    if card is None:
+        return None
+    # Several character artworks may depict the same base card. They do not
+    # constitute independent competitors; unresolved assets remain competitors.
+    other = 0.0
+    for candidate_score, candidate_asset in ranked[1:]:
+        candidate = _card_from_asset(candidate_asset)
+        if candidate is None or candidate._id != card._id:
+            other = float(candidate_score)
+            break
+    margin = float(score) - other
+    if margin < CAPTURED_MIN_MARGIN:
+        return None
+    value, unit = _value(img,k,"enchant",card._id)
+    return {"slot":k,"kind":"enchant","card_id":card._id,"name":card.name,
+            "asset":asset,"score":round(float(score),3),"margin":round(margin,3),
+            "value":value,"unit":unit,"identity_basis":"card_art_after_unrecognized_blue_glyph"}
+
+
 def _card_from_asset(key: str) -> SkillCard | None:
     base = "-".join(key.removeprefix("img_general_skillcard_").split("-")[:2])
     return SkillCard.from_asset_id("img_general_skillcard_" + base) or SkillCard.from_asset_id(key)
@@ -406,6 +438,10 @@ def _read_slot(img: MatLike, k: int) -> dict:
         top = match_status_icon(patch)
         score, key = top[0]
         if not _accepted(meta, top):
+            if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+                recovered = _high_confidence_enchant(img,k)
+                if recovered is not None:
+                    return recovered
             entry = {"slot": k, "kind": "status", "key": None, "score": round(score, 3), "candidates": [c for _, c in top]}
         else:
             info = meta.get(key, {})

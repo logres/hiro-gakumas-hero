@@ -110,7 +110,7 @@ class ProduceDeciders:
         # policies when their own metadata is incomplete.
         from hiro.brain.route_guard import guard
         try:
-            scoped = guard(self, page, state, **kw)
+            scoped = guard(self, page, state, n_options=n_options, **kw)
         except Exception as exc:
             logger.exception("路线决策 %s 异常", page)
             scoped = Decision(Action.ui(ActionKind.WAIT, why=str(exc)), "路线信息不完整：停止，不套用元气专用规则",

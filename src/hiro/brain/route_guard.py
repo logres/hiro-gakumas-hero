@@ -147,6 +147,9 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
     if page == "SKILL_CARD_ENHANCE":
         return _enhance(state, identity)
     if page == "SELECT_DRINK":
+        from hiro.brain.route_drink_selection import choose, enabled
+        if enabled():
+            return choose(decider, state, identity, can_skip=kw.get("can_skip", True), n_options=kw.get("n_options"))
         if kw.get("can_skip", True):
             return _decision(Action.exclude_card(0), "非やる気路线：饮料价值未适配，允许跳过时不拿", page, 0.3)
         return _wait(page, "非やる気路线：饮料必选但缺少适用评级，等待确认")

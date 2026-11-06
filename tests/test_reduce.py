@@ -34,6 +34,15 @@ def test_pure_and_transient():
     assert s3.page.name == "ACTION_SELECT" and s3.page.frames == 1
 
 
+def test_drink_reward_returns_to_gift_before_next_card():
+    s = reduce(GameState(), obs(1, "SELECT_DRINK", {"candidates": [{"drink_id": "synthetic"}]}))
+    s = reduce(s, obs(2, "GIFT"))
+    assert s.page.name == "GIFT" and s.pending_page is None
+    s = reduce(s, obs(3, "SELECT_CARD", {"candidates": [{"card_id": "synthetic-card"}]}))
+    assert s.page.name == "SELECT_CARD" and s.pending_page is None
+    assert s.page_fields["candidates"] == [{"card_id": "synthetic-card"}]
+
+
 def test_none_keeps_old_value_and_stable_counter():
     s = reduce(GameState(), obs(1, "ACTION_SELECT", {"stamina": 20, "star": 15}))
     s = reduce(s, obs(2, "ACTION_SELECT", {"stamina": None, "star": 45}))

@@ -83,6 +83,8 @@ _NEXT["HIF_EXAM_RESULT"].add("PRODUCE_END")
 # 识屏 ce615b6 快速判页新页面 GIFT（差し入れ礼物箱）→ 打开后进三选一（第十八局本战：GIFT → SELECT_DRINK 不在图里，防抖 3 帧，候选没进 state 就停机）
 _NEXT["GIFT"] = {"ACTION_SELECT", "ACQUIRE"} | SELECTS | DRINK_FULL
 _NEXT.setdefault("ACTION_SELECT", set()).add("GIFT")
+# A gift can contain multiple rewards: receiving a drink returns to its boxes.
+_NEXT["SELECT_DRINK"].add("GIFT")
 for _p in CARD_OPS:
     _NEXT[_p] = {"CONSULT", "ACTION_SELECT", "HIF_ROUND_INTERVAL", "STUDY", "OUTING"} | SELECTS | CARD_OPS
 for _p in DRINK_FULL:

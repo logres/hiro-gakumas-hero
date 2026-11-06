@@ -6,7 +6,7 @@
 
 目标是让原仓库**已经公开实现**的功能通过 Windows / DMM 运行，并将高权限设备操作集中到独立 broker；不把作者私有系统的成绩或未实现功能当作移植完成条件。**已接入**指实现和针对性验证存在，**局部验证**指仅有明确限定的 DMM 证据，**待验收**指不能据现有证据声称整项实机可用。
 
-最新有效实机证据包括：普通权限 Python（完整性 8192）经常驻高权限 broker（PID 54384，完整性 12288）在实际 DMM 窗口完成截图、首页菜单打开/关闭并返回首页；多个普通客户端重连及多次 `resume` 复用同一 broker，无需每次 UAC。实际滑动与设置读取成功；支援卡 20 个编成扫描完成，`reports/live/support-inventory.json` 记录 23 张卡、`problems: []`。第 2 步全帧日文 OCR 曾把编成号 7 误读成 1，现改用固定裁剪、白字预处理和英文 OCR，并在编号未知时停止扫描。实机逐步选择支援编成 7→15、回忆编成 1→2→1，核对四张回忆卡，原租借逻辑选入「もうすぐ本番ですね」（Vi、Lv60、突破4）。白线葛城リーリヤ（支援编成 15、回忆编成 1）的真实选拔已消耗 AP，完成第 6 天并进入首考；Codex CLI 在实际考试中完成出牌与饮料组合。首考前三次得分分别为 2683、5509、3023，均未通过，三次重试已用；第 4 次（r8）得分 4691，仍败退，随后进入正常失败结算，**不能记为考试通过**。选拔三考、本战、日常及回忆全量库存仍未验收。最新完整回归为 **638 passed、530 skipped、27 warnings**；跳过的截图用例不构成识别通过。
+最新有效实机证据包括：普通权限 Python（完整性 8192）经常驻高权限 broker（PID 54384，完整性 12288）在实际 DMM 窗口完成截图、首页菜单打开/关闭并返回首页；多个普通客户端重连及多次 `resume` 复用同一 broker，无需每次 UAC。实际滑动与设置读取成功；支援卡 20 个编成扫描完成，`reports/live/support-inventory.json` 记录 23 张卡、`problems: []`。第 2 步全帧日文 OCR 曾把编成号 7 误读成 1，现改用固定裁剪、白字预处理和英文 OCR，并在编号未知时停止扫描。实机逐步选择支援编成 7→15、回忆编成 1→2→1，核对四张回忆卡，原租借逻辑选入「もうすぐ本番ですね」（Vi、Lv60、突破4）。白线葛城リーリヤ（支援编成 15、回忆编成 1）的真实选拔已消耗 AP，完成第 6 天并进入首考；Codex CLI 在实际考试中完成出牌与饮料组合。首考前三次得分分别为 2683、5509、3023，均未通过，三次重试已用；第 4 次（r8）得分 4691，仍败退，随后进入正常失败结算，**不能记为考试通过**。选拔三考、本战、日常及回忆全量库存仍未验收。最新完整回归为 **721 passed、530 skipped、27 warnings**；跳过的截图用例不构成识别通过。
 
 ## 功能清单
 
@@ -18,9 +18,9 @@
 | 日文/英文 OCR、框坐标与文本排序 | `platforms/windows/ocr.py`、`vision/ocr.py` | 模型、合成样例、首页、设置、支援及局部选拔画面的真实 OCR 已使用；第 2 步白底编成号 7→1 误读已按实际裁剪修复 | 继续核对小字、描边、数值和动画背景；RapidOCR 的断词/排序不同于 Apple Vision，局部修复不能代表全页面准确 |
 | 判页、HUD、分数、NPC/名次/突破线、手牌/徽章、状态、道具、饮料 | `vision/{pages,quick,hif,digits,cards,status,items,drinks,observe}.py`、`perception/lesson.py` | 第 1～6 天及首考已有局部实机读数；HUD 原生缩放、增长率箭头排除、P 数字、缺日数及分段体力读数已按实帧修正；未知偶像 trend 在预演中保持未知值 | 继续核对真实 DMM 首考及后续考试的分数、NPC/名次、突破线、手牌、徽章、状态、道具、饮料与 None 退路；本战仍未覆盖 |
 | 素材插件、图标补齐、卡图与图标渲染缓存 | `plugins.py`、`defaults/assets.py`、`vision/assets.py`、`tools/assets/capture_icons.py`、`vision/card_icon_render.py` | 素材包与公开数据已接入，离线功能已有 | Windows 路径与缓存生成 smoke；新图标来自用户本地截图，label/apply 仍需核查；导出客户端 sprite 的工具不可假设沿用 iOS 路径 |
-| 整局选拔 → 本战、本战单独运行 | `tools/play_game.py`、`hiro/run_hif.py` | 白线葛城リーリヤ的真实选拔已完成第 6 天并进入首考；前三次首考失败，第 4 次更新时进行中；尚无完整选拔局或本战证据 | 验证选拔三考、qualify→main 子进程传递、本战 R1/中场/R2、main-only 和最终结果；选拔退出非零不得自动开本战 |
+| 整局选拔 → 本战、本战单独运行 | `tools/play_game.py`、`hiro/run_hif.py` | 白线葛城リーリヤ的真实选拔已完成第 6 天并进入首考；四次首考均失败并正常结算；新一局已进入第 1 天；尚无完整选拔局或本战证据 | 验证选拔三考、qualify→main 子进程传递、本战 R1/中场/R2、main-only 和最终结果；选拔退出非零不得自动开本战 |
 | 新开局、续跑、跨端培育拦截 | `loop/{controller,resume}.py`、`run_hif.py` | 实际 `new` 已进入选拔；多次 `resume` 经普通客户端复用同一 broker 并继续推进 | 仍需覆盖跨端进度默认停机退出 3、异常恢复及完整流程；不能把恢复操作变成放弃 |
-| 支援与回忆库存扫描（列表/编成/详情翻页） | `tools/support_inventory.py`、`tools/memory_inventory.py`、`hiro/memory_scan.py`、`vision/{support_screens,memory}.py` | DMM 支援编成 `--live` 已扫完 20 个编成，报告 23 张卡、`problems: []`；实际滑动已工作；未知编成号会停下而不猜。回忆库存及支援卡全量 `--list` 未验收 | 继续验证全量列表分页、详情刷新、取消退出和回忆库存；扫描会操作 UI 但不点決定；本地帧不得提交 |
+| 支援与回忆库存扫描（列表/编成/详情翻页） | `tools/support_inventory.py`、`tools/memory_inventory.py`、`hiro/memory_scan.py`、`vision/{support_screens,memory}.py` | DMM 支援编成 `--live` 已扫完 20 个编成，报告 23 张卡、`problems: []`；实际滑动已工作；未知编成号会停下而不猜。回忆已完成一屏六份的双页连续扫描与取消退出；全量回忆库存及支援卡全量 `--list` 未验收 | 继续验证全量列表分页、详情刷新、取消退出和回忆库存；扫描会操作 UI 但不点決定；本地帧不得提交 |
 | 离线编成建议、主属性、回忆优先级、租借估价 | `brain/{formation_plan,formation,support_select}.py`、`state/memory_priority.py` | 已有纯策略和方案文件流程 | 用实际库存生成方案；确认偶像与方案绑定、环境覆盖优先级、默认支援效果缺失退路 |
 | 开局支援/回忆编成核对与支援租借 | `produce/{formation_check,rental,memory_picker,idol_switch}.py`、`vision/memory_icons.py`、`kaa_env.py`、`loop/kaa_patches.py` | 支援编成 7→15、回忆编成 1→2→1 实机切换，四张回忆卡核对，租借「もうすぐ本番ですね」（Vi、Lv60、突破4）成功；新偶像皮肤切换弹窗曾人工选「切り替えない」，默认关闭的自动处理只有受控测试 | 其他编成/租借候选与不匹配退出 3、挑不到卡停机仍需覆盖；弹窗自动拒绝需另做实机验证 |
 | 日程/训练/行动/外出/活动/礼物/休息 | `produce/hif.py`、`brain/{hif_rules,deciders}.py`、`defaults/schedule_hif.json` | 真实选拔前两天礼物/训练取卡、第 3 天授業取卡、第 4 天规则选择 Vi SP，推进至第 6 天首考 | 继续验收首考后的选拔日程、本战 9 项及其他行动入口；不通过平台移植擅自改变社区策略 |
@@ -69,7 +69,7 @@
 2. 依 [`windows-broker.md`](windows-broker.md) 启动并选择 broker provider，同时显式设置 Windows OCR/window provider；LLM 主进程保持普通权限。唯一 DMM 游戏窗口、桌面解锁，前台输入期间保留鼠标使用空间。native 输入需同/更高完整性等级，不能绕过 UIPI。
 3. broker 的 UAC 启动、普通客户端重连及实际菜单链路已通过。更换安装或运行环境时，再从独立外部 PowerShell 核对真实路径、import、模型/CLI 登录和跨应用可见性；不能把 Codex 应用内写入回读当成这些检查。
 4. offline demo/replay 和针对改动的测试之后，利用已通过的 broker 截图/菜单/滑动、支援编成扫描与真实选拔第 1～6 天及首考的局部证据，继续验收首考结果和其余两考、第 2/3 步其他分支、回忆库存和支援全量列表；再逐项日常及本战。每一步保存本地证据和实际 UI 结果，未知画面停下处理。
-5. H.I.F 开始前：首页、无别端进行中的培育、AP 或 AP ドリンク足够、正确偶像/编成号/回忆/主属性；`HIRO_MEMORY_CARDS` 或方案提供已带入技能卡。未选择 LLM 时用 `--no-llm`；需要 LLM 时在普通用户环境提供适配器配置。
+5. H.I.F 开始前：首页、无别端进行中的培育、AP 或 AP ドリンク足够、正确偶像/编成号/回忆/主属性；`HIRO_MEMORY_CARDS` 与 `HIRO_MEMORY_CARD_TIMINGS`（或方案时机）区分开局/晚入手卡；未知时机不提前计为已有。未选择 LLM 时用 `--no-llm`；需要 LLM 时在普通用户环境提供适配器配置。
 6. 最终验收至少覆盖：qualify 三场 → main R1/中场/R2、main-only、resume、安全退出、日常六项、库存两类、方案核对、trace/viewer/replay。没有跑到的项明确写待验收，不用菜单通过代替。
 
 仅提交源码、文档和合成测试；截图、OCR 帧、trace、账号、密钥、主数据库、自建素材及运行配置留在 `.gitignore` 覆盖的本地目录。

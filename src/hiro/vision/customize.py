@@ -110,16 +110,49 @@ def read_menu(img: MatLike, boxes) -> dict | None:
         if name is None and price is None:
             continue
         top, bottom = hy + 22, hy + 140
-        items.append({"item_index": len(items), "name": name, "price": price, "left": left, "maxed": maxed,
+        items.append({"item_index": k, "name": name, "price": price, "left": left, "maxed": maxed,
                       "available": (not maxed) if (maxed or left is not None or price is not None) else None,
                       "corner_px": _corner_px(orange, x1 + 8, top, x2 - 8, bottom), "center": [(x1 + x2) // 2, hy + 75]})  # fmt: skip
     # 选中项：橙色角框像素最多的一块（相邻块的角框会漏进旁边的检测区，不能各自按阈值判）
     best = max(items, key=lambda it: it["corner_px"], default=None)
+    # Preview identity needs unique image evidence; keep legacy selected flags below.
+    unique = best is not None and best["corner_px"] >= 400 and sum(it["corner_px"] == best["corner_px"] for it in items) == 1
+    selected_index = best["item_index"] if unique else None
     for it in items:
         it["selected"] = it is best and it["corner_px"] >= 400
         del it["corner_px"]
     total = next((int(m.group(1)) for t, _ in boxes if (m := re.search(r"合計あと(\d+)回", t.replace(" ", "")))), None)
-    return {"items": items, "total_left": total, "y": hy}
+    return {"items": items, "total_left": total, "y": hy, "selected_item_index": selected_index}
+
+
+def read_preview(boxes, menu: dict | None) -> dict | None:
+    """Observed menu detail panels, preserving OCR verbatim (not complete card semantics).
+
+    Coordinates refer to the normalized 720x1280 frame. Missing OCR, including
+    upgrade plus signs, stays missing; no master text is substituted.
+    """
+    if menu is None or menu["y"] < 740:
+        return None  # select view has only one detail panel
+
+    def panel(region, name_region, effect_region):
+        def lines(rect):
+            x1, y1, x2, y2 = rect
+            return [{"text": t, "box": [int(v) for v in b]} for t, b in sorted(boxes, key=lambda tb: (_cy(tb[1]), tb[1][0]))
+                    if x1 <= _cx(b) < x2 and y1 <= _cy(b) < y2]
+        names = lines(name_region)
+        name_raw = "".join(line["text"] for line in names) or None
+        return {"region": list(region), "name_region": list(name_region), "effect_region": list(effect_region),
+                "name_lines": names, "effect_lines": lines(effect_region), "raw_lines": lines(region),
+                "selected_card": {"name_raw": name_raw,
+                                  "upgrade": 1 if name_raw and name_raw.rstrip().endswith(("+", "＋")) else None,
+                                  "source": "screen_ocr"}}
+
+    selected = next((it for it in menu["items"] if it["item_index"] == menu["selected_item_index"]), None)
+    return {"source": "screen_ocr", "before": panel((20, 158, 700, 445), (190, 173, 680, 200), (190, 220, 680, 445)),
+            "after": panel((20, 454, 700, 743), (190, 465, 680, 498), (190, 518, 680, 743)),
+            "selected_item_index": menu["selected_item_index"], "price": selected["price"] if selected else None,
+            "left": selected["left"] if selected else None, "total_left": menu["total_left"],
+            "items": [{k: it[k] for k in ("item_index", "price", "left")} for it in menu["items"]]}
 
 
 def read_special_guidance(img: MatLike, boxes=None) -> dict:
@@ -140,10 +173,11 @@ def read_special_guidance(img: MatLike, boxes=None) -> dict:
     name = "".join(t for t, b in boxes if DETAIL_NAME_Y[0] <= _cy(b) <= DETAIL_NAME_Y[1] and b[0] >= 180).replace("＋", "+").replace(" ", "")
     selected_card = card_from_name(name) if name else None
     menu = read_menu(img, boxes)
-    if menu is not None and selected_card is not None:
-        offers = master_offers(selected_card["card_id"], selected_card["upgrade"])
+    if menu is not None:
+        offers = master_offers(selected_card["card_id"], selected_card["upgrade"]) if selected_card else []
+        aligned = bool(offers) and [it["item_index"] for it in menu["items"]] == list(range(len(offers)))
         for it in menu["items"]:
-            it["id"] = offers[it["item_index"]]["id"] if len(offers) == len(menu["items"]) else None
+            it["id"] = offers[it["item_index"]]["id"] if aligned else None
     cards, selected = [], None
     if view == "select":
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -168,7 +202,7 @@ def read_special_guidance(img: MatLike, boxes=None) -> dict:
 
     hud = read_hud_resources(img)  # q11：决策拿不到 P（「P None」）就一项都不定制；左上 P 栏与选行动页同一位置
     return {**hud, "view": view, "cards": cards if view == "select" else None, "selected": selected, "selected_card": selected_card,
-            "menu": menu, "cards_left": left, "scrollable": scroll["scrollable"], "at_top": scroll["at_top"],
+            "menu": menu, "preview": read_preview(boxes, menu), "cards_left": left, "scrollable": scroll["scrollable"], "at_top": scroll["at_top"],
             "complete": (not scroll["scrollable"]) if view == "select" else None}  # fmt: skip
 
 

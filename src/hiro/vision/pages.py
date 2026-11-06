@@ -530,12 +530,23 @@ def read_hud_resources(img: MatLike) -> dict:
 
     x1, y1, x2, y2 = POINTS_BOX
     pt = re.search(r"\d+", "".join(t for t, _ in ocr(img[y1:y2, x1:x2], scale=4, languages=("en-US",))))
+    points_digits = read_dddd(img, POINTS_BOX)
+    points = vote(int(pt.group()) if pt else None, font(POINTS_BOX), points_digits)
+    if points is None and points_digits is not None:
+        # Tight HUD crops can split the final digit on DMM. A padded OCR read is
+        # accepted only as independent agreement with the digit recognizer.
+        padded = img[max(0, y1 - 9):min(img.shape[0], y2 + 9), x1:min(img.shape[1], x2 + 10)]
+        reads = ocr(padded, scale=2, languages=("en-US",))
+        if len(reads) == 1 and reads[0][1] >= .9 and re.fullmatch(r"\d+", reads[0][0]):
+            candidate = int(reads[0][0])
+            if candidate == points_digits:
+                points = candidate
     st = read_stamina(img)
     sx1, sy1, sx2, sy2 = STAMINA_BOX
     hp_box, max_box = (sx1, sy1, 380, sy2), (382, sy1, sx2, sy2)
     return {"stamina": vote(st[0] if st else None, font(hp_box), read_dddd(img, hp_box)),
             "max_stamina": vote(st[1] if st else None, read_dddd(img, max_box)),
-            "produce_point": vote(int(pt.group()) if pt else None, font(POINTS_BOX), read_dddd(img, POINTS_BOX))}  # fmt: skip
+            "produce_point": points}  # fmt: skip
 
 
 def read_interval(img: MatLike) -> dict:

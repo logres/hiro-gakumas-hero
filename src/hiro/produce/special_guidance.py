@@ -71,8 +71,11 @@ def enter(
     ocr=None,
     calib: bool = True,
 ) -> ExecutionResult:
-    """选行动页进入特別指導：点一次选中、再点一次确认（与 KAA 选行动相同），直到按钮下方的「特別指導」标签消失。
-    （「行動を選択してください」字太淡，OCR 常丢字，不用它判断。）"""
+    """选中后再确认；只以选卡页 / 定制菜单的正向证据确认进入。
+
+    选中提示仍属选行动页，标签漏读也可能只是过渡帧。确认后独立等待目标页，
+    至少读两帧，避免慢 OCR 读完点击瞬间的旧帧就耗尽等待时间。
+    """
     act = Action(ActionKind.PRODUCE_NEXT, {"step_type": "SpecialGuidance", "option": "special_guidance"})
     r = _runner(act, shoot, click, clock, sleep, ocr, calib)
     r.page = "ACTION_SELECT"
@@ -80,14 +83,33 @@ def enter(
     label = (pos[0] - 100, pos[1] + 20, pos[0] + 100, pos[1] + 110)  # 按钮下方的「特別指導」标签（r10：(440, 1080)）
     img = r.shoot()
     r.snap(img, "action-select")
-    for attempt in range(2):
+    boxes = r.ocr(img)
+    def entered(b):
+        return on_grid(b) or on_menu(b)
+
+    if entered(boxes):
+        return r.result(True, page_after=PAGE)
+    r.tap(pos)
+    selected_at = r.clock()
+    state = {"boxes": boxes}
+
+    def selected_or_entered(im):
+        b = state["boxes"] = r.ocr(im)
+        # 实机选中框上方的说明气泡；不是进入定制页的证据。
+        selected = find_text(b, ("Pポイントを消費し", "カスタマイズできます"), region=(100, 760, 590, 900)) is not None
+        return entered(b) or (selected and r.clock() - selected_at >= 0.6)
+
+    _, img = r.until(selected_or_entered, ENTER_TIMEOUT / 2, min_checks=2)
+    boxes = state["boxes"]
+    ok = entered(boxes)
+    # 只有仍看见来源页按钮时才补确认；未知帧不盲点，最多两次点击。
+    if not ok and find_text(boxes, TITLE, region=label) is not None:
+        r.snap(img, "selected")
         r.tap(pos)
-        ok, img = r.until(lambda im: find_text(r.ocr(im), TITLE, region=label) is None, ENTER_TIMEOUT / 2)
-        if ok:
-            break
+        ok, img = r.until(lambda im: entered(r.ocr(im)), ENTER_TIMEOUT, min_checks=2)
     r.snap(img, "entered")
     if not ok:
-        return r.result(False, f"点「特別指導」{len(r.taps)} 次后仍在选行动页")
+        return r.result(False, f"点「特別指導」{len(r.taps)} 次后未确认选卡页 / 定制菜单", page_after=None)
     logger.info("已进入特別指導（%.1fs）", r.clock() - r.t0)
     return r.result(True, page_after=PAGE)
 

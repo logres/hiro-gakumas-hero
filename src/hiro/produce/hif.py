@@ -220,8 +220,7 @@ class HiroHifStrategy(HifGrindStrategy):
             self.s.record(obs, decision=d, timings_ms={"total": (time.monotonic() - t0) * 1000})
             if self._special_guidance(obs):
                 return
-            d = self.deciders.decide("ACTION_SELECT", self.s.state)  # 进不去：再决策一次，下面按候选走
-            d = replace(d, warnings=[*d.warnings, "特別指導 没进去，改用候选"])
+            self._stop("ACTION_SELECT", "特別指導进入结果未确认；不在可能已变化的页面执行旧候选", obs=obs, decision=d)
         choice = self._to_produce_action(d.action, actions)
         if choice is None and d.action.kind is ActionKind.PRODUCE_NEXT:
             # 首选执行不了（例如「特別指導」KAA 没有这个行动）：按决策器的候选顺序找第一个能执行的，不交给 KAA 的 v0 规则（它会回退成休息）

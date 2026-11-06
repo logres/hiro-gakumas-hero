@@ -531,6 +531,15 @@ class BattleState:
             "action_previews": self.action_previews,
         }
         out = {k: v for k, v in d.items() if v is not None}
+        from hiro.brain.route_policy import explicit_route_enabled
+        if explicit_route_enabled():
+            known = {attr: value for attr, value in self.attr_permils.items()
+                     if attr in ("Vo", "Da", "Vi") and type(value) is int and value > 0}
+            if known:
+                out["known_attribute_multiplier_permils"] = known
+                out["known_attribute_multiplier_note"] = (
+                    "来源：本场已记录的属性倍率，1000表示1倍；未知属性不补值。"
+                    "这是属性与倍率的对应关系，不提供未来回合顺序，不能保证之后出现某属性。")
         if self.strategy_references:
             # Preserve exact hand identity/version when references are supplied;
             # an unrecognized placeholder has no known upgrade version.

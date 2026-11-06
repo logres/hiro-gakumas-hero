@@ -80,6 +80,16 @@ class TraceWriter:
         self._steps.write(step.to_json() + "\n")
         self._steps.flush()
 
+    def record_initial_state(self, state: GameState) -> None:
+        """Record the state injected before the next step of this trace segment."""
+        run = self.dir / "run.json"
+        data = json.loads(run.read_text(encoding="utf-8"))
+        first_seq = self.seq + 1
+        snapshots = [entry for entry in data.get("initial_states", []) if entry.get("first_seq") != first_seq]
+        snapshots.append({"first_seq": first_seq, "state": state.to_dict()})
+        data["initial_states"] = snapshots
+        run.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
     def close(self) -> None:
         self._steps.close()
 

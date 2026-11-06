@@ -9,10 +9,12 @@
 
 import argparse
 import json
+import re
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from hiro.contracts import GameState, Observation, Step
+from hiro.contracts import GameState, Observation, Source, Step
 from hiro.loop.reduce import DEBOUNCE, reduce
 
 
@@ -39,7 +41,8 @@ def load_observations(path: Path) -> tuple[list[list[Observation]], list[GameSta
     return groups, recorded
 
 
-def run(groups: list[list[Observation]] | list[Observation], initial: GameState | None = None, events: list[list] | None = None) -> list[GameState]:
+def run(groups: list[list[Observation]] | list[Observation], initial: GameState | None = None, events: list[list] | None = None,
+        initial_states: dict[int, GameState] | None = None) -> list[GameState]:
     """逐组走主循环同一条路径（互验 → reduce → 事件），返回每组结束时的状态。也接受扁平的 Observation 列表。"""
     from hiro.loop.events import apply_event, reduce_checked, settle
 
@@ -47,6 +50,10 @@ def run(groups: list[list[Observation]] | list[Observation], initial: GameState 
     preds: list = []
     out = []
     for i, g in enumerate(groups):
+        first = g[0] if isinstance(g, list) else g
+        if initial_states and first.seq in initial_states:
+            s = initial_states[first.seq]
+            preds = []  # a new Session starts with no pending predictions
         for o in (g if isinstance(g, list) else [g]):
             s, checks = reduce_checked(s, o, preds)
             preds = settle(preds, checks)
@@ -55,6 +62,58 @@ def run(groups: list[list[Observation]] | list[Observation], initial: GameState 
             preds.extend(p)
         out.append(s)
     return out
+
+
+def _legacy_resume_seed(path: Path) -> GameState | None:
+    """Recover the pre-first-step seed of old -rN traces from preceding segments.
+
+    Mirrors HiroHifStrategy._seed_produce_from_trace; never takes the current
+    segment's recorded state as an initial state for its own comparison.
+    """
+    match = re.fullmatch(r"(.+)-r(\d+)", path.parent.name)
+    if not match:
+        return None
+    base, index = match.group(1), int(match.group(2))
+    last, last_seq = None, 0
+    for d in sorted(path.parent.parent.glob(base + "*")):
+        prior = re.fullmatch(re.escape(base) + r"(?:-r(\d+))?", d.name)
+        if not prior or (int(prior.group(1)) if prior.group(1) else 0) >= index:
+            continue
+        try:
+            with (d / "steps.jsonl").open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        step = json.loads(line)
+                    except ValueError:
+                        continue
+                    state = step.get("state_after") or step.get("state") or {}
+                    if state.get("produce"):
+                        last, last_seq = state, int(step.get("seq") or 0)
+        except OSError:
+            continue
+    if last is None:
+        return None
+    produce = last["produce"]
+    return replace(GameState(), produce=produce,
+                   sources={f"produce.{key}": Source("infer", last_seq) for key in produce},
+                   mode=last.get("mode", "unknown"))
+
+
+def _initial_states(path: Path, groups: list[list[Observation]]) -> dict[int, GameState]:
+    if path.name != "steps.jsonl" or not groups:
+        return {}
+    run_path = path.parent / "run.json"
+    try:
+        meta = json.loads(run_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    snapshots = {int(entry["first_seq"]): GameState.from_dict(entry["state"])
+                 for entry in meta.get("initial_states", [])}
+    first_seq = groups[0][0].seq
+    if first_seq not in snapshots and meta.get("command") == "resume":
+        if seed := _legacy_resume_seed(path):
+            snapshots[first_seq] = seed
+    return snapshots
 
 
 def flaps(states: list[GameState]) -> list[tuple[int, str, str]]:
@@ -75,8 +134,9 @@ def flaps(states: list[GameState]) -> list[tuple[int, str, str]]:
 def report(path: Path, out: Path | None = None) -> dict:
     observations, recorded = load_observations(path)
     evs = getattr(load_observations, "events", None)
-    a = run(observations, events=evs)
-    b = run(observations, events=evs)
+    initial_states = _initial_states(path, observations)
+    a = run(observations, events=evs, initial_states=initial_states)
+    b = run(observations, events=evs, initial_states=initial_states)
     identical = all(x.to_dict() == y.to_dict() for x, y in zip(a, b)) and len(a) == len(b)
     changes = sum(1 for i in range(1, len(a)) if a[i].page.name != a[i - 1].page.name)
     mismatch = [st.seq for st, rec in zip(a, recorded) if rec is not None and st.to_dict() != rec.to_dict()]

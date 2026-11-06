@@ -641,6 +641,7 @@ class HiroHifStrategy(HifGrindStrategy):
         sources = {**{f"produce.{k}": Source("infer", last_seq) for k in last["produce"]}, **cur.sources}
         mode = cur.mode if cur.mode != "unknown" else last.get("mode", cur.mode)
         self.s.state = replace(cur, produce=produce, sources=sources, mode=mode)
+        self.s.trace.record_initial_state(self.s.state)
         p = last["produce"]
         self.s.note(f"续跑：用之前 trace 的最后状态打底（seq {last_seq}：P {p.get('produce_point')}、体力 {p.get('stamina')}/{p.get('max_stamina')}），"
                     "画面读到就覆盖")  # fmt: skip

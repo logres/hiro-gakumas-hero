@@ -240,11 +240,28 @@ def _font_digit_sequence(glyphs):
     if not known:
         return None
     left, right = known[0][0], known[-1][0] + known[-1][1]
-    if any(char is None and x < right and x+w > left for x,w,h,char in glyphs):
+    if any(char is None and left <= x+w/2 <= right for x,w,h,char in glyphs):
         return None
     if any(b[0]-a[0]-a[1] > max(a[2],b[2])*GROUP_GAP for a,b in zip(known,known[1:])):
         return None
     return int("".join(g[3] for g in known))
+
+
+def _exclude_edge_background(glyphs, shape):
+    """Exclude edge-connected noise only against a proven digit baseline."""
+    known = [g for g in glyphs if g[4] is not None]
+    if len(known) < 2:
+        return glyphs
+    heights = [g[3] for g in known]
+    baselines = [g[1]+g[3] for g in known]
+    tolerance = float(np.median(heights)) / 5
+    if max(baselines)-min(baselines) > tolerance:
+        return glyphs
+    baseline = float(np.median(baselines))
+    h_crop,w_crop = shape
+    return [(x,y,w,h,char) for x,y,w,h,char in glyphs
+            if not (char is None and (x == 0 or y == 0 or x+w >= w_crop or y+h >= h_crop)
+                    and abs(y+h-baseline) > tolerance)]
 
 
 def _font_digits_without_ring(img: MatLike, k: int) -> int | None:
@@ -265,16 +282,19 @@ def _font_digits_without_ring(img: MatLike, k: int) -> int | None:
         if not digits.GLYPH_H_RANGE[0]*3 <= h <= digits.GLYPH_H_RANGE[1]*3 or area < 60:
             continue
         score, char = digits._best_char(digits._scale(labels[y:y+h,x:x+w] == i))
-        glyphs.append((x,w,h,char if score >= digits.MIN_SCORE and char is not None and char.isdigit() else None))
-    return _font_digit_sequence(glyphs)
+        glyphs.append((x,y,w,h,char if score >= digits.MIN_SCORE and char is not None and char.isdigit() else None))
+    glyphs = _exclude_edge_background(glyphs,fill.shape)
+    return _font_digit_sequence([(x,w,h,char) for x,y,w,h,char in glyphs])
 
 
 def _verified_status_number(img: MatLike, k: int) -> int | None:
     """Recover a failed font read with independent engine and crop agreement.
 
     Bright scenery can invalidate the dark ring around an otherwise clear 0.
-    Upsampling a tight crop can then make ddddocr lose that digit. Native OCR
-    must read one complete number, agreeing with ddddocr on a padded crop.
+    Upsampling a tight crop can then make ddddocr lose that digit. Accept a
+    complete glyph read agreeing with padded-crop ddddocr, or a complete native
+    OCR read agreeing with it. A literal percent may instead use glyph agreement
+    when ddddocr has incorporated the percent sign into the number.
     """
     cy = _slot_y(k)
     x1, y1, x2, y2 = SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32

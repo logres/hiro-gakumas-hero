@@ -343,3 +343,37 @@ def test_local_r27_failed_restore_frames_have_recoverable_exact_state(monkeypatc
         assert status.status_summary(rows)["examlessonvaluemultiple"]==20
         assert values["buffs"]=={"もう怖くないから":None,"虹色ドリーマー":None,
                                 "輝くキミへ":None,"パラメータ上昇量増加":20,"ファンシーチャーム":None}
+
+
+@pytest.mark.parametrize("noise,removed", [
+    ((47,0,90,56,None),True),
+    ((60,18,20,49,None),False),
+    ((60,7,96,60,None),False),
+    ((60,1,20,40,None),False)])
+def test_edge_noise_requires_multiple_digits_and_different_baseline(noise,removed):
+    digits=[(24,19,34,48,"1"),(66,18,36,49,"6"),(110,18,36,49,"6")]
+    filtered=status._exclude_edge_background(digits+[noise],(102,156))
+    assert (noise not in filtered) is removed
+    value=status._font_digit_sequence([(x,w,h,char) for x,y,w,h,char in filtered])
+    assert value == (166 if removed else None)
+
+
+def test_single_digit_does_not_establish_background_exclusion_baseline():
+    glyphs=[(24,19,34,48,"1"),(47,0,90,56,None)]
+    assert status._exclude_edge_background(glyphs,(102,156))==glyphs
+
+
+def test_peripheral_icon_fragment_does_not_become_internal_unknown_digit():
+    assert status._font_digit_sequence([(5,27,40,None),(24,34,48,"1"),(66,36,49,"6")])==16
+
+
+def test_local_r28_edge_background_does_not_hide_complete_166(monkeypatch):
+    base=Path(__file__).resolve().parents[1]/"reports/runs/20261107-075500/frames"
+    if not base.exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    for seq in (5,7,9):
+        image=cv2.imread(str(base/f"{seq:05d}-exam_card_detail_state_changed.png"))
+        assert status._font_digits_without_ring(image,0)==166
+        assert status._value(image,0,"status")[0]==166

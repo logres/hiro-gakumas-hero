@@ -12,6 +12,7 @@
 complete：货架下方的说明行可见（没有获得动画 / 详情弹窗盖着）；为 False 时各格可能被遮挡或压暗，决策应等下一帧。
 """
 
+import os
 import re
 from functools import cache
 from pathlib import Path
@@ -21,7 +22,8 @@ import numpy as np
 from cv2.typing import MatLike
 
 from hiro.vision.items import _library
-from hiro.vision.ocr import ocr_boxes
+from hiro.vision.ocr import ocr, ocr_boxes
+from hiro.vision.digits import read_dddd
 
 REGION = (40, 470, 700, 1070)
 COLS = (65, 220, 375, 530)  # 各列格子左缘
@@ -91,6 +93,31 @@ def _nums(texts: list[str]) -> list[int]:
     return [int(n) for t in texts for n in re.findall(r"\d+", t.replace(",", ""))]
 
 
+def _verified_price(img: MatLike, box: tuple[int, int, int, int]) -> int | None:
+    """Exact numeric crop; all readers must agree, never repair from a price list."""
+    x1, y1, x2, y2 = box
+    crop = img[y1:y2, x1:x2]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    binary = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)[1]
+    padded = cv2.copyMakeBorder(binary, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+    prepared = cv2.cvtColor(padded, cv2.COLOR_GRAY2BGR)
+    values = [read_dddd(img, box)]  # exact bounds: no glyph-reader margin expansion
+    for scale in (2, 4):
+        tokens = ocr(prepared, scale=scale, languages=("en-US",))
+        text = "".join(text for text, _ in tokens).strip()
+        if not tokens or any(confidence < .9 for _, confidence in tokens) or not re.fullmatch(r"\d+", text):
+            return None
+        values.append(int(text))
+    return values[0] if values[0] is not None and len(set(values)) == 1 else None
+
+
+def _sale_mark(img: MatLike, x: int, top: int) -> bool:
+    y1, y2 = SALE_BAND[top]
+    hsv = cv2.cvtColor(img[y1:y2, x + 20:x + 110], cv2.COLOR_BGR2HSV)
+    pink = ((hsv[:, :, 0] >= 160) | (hsv[:, :, 0] <= 5)) & (hsv[:, :, 1] >= 100) & (hsv[:, :, 2] >= 120)
+    return int(pink.sum()) >= 100  # colored SALE pill; distinct from gray struck-through old price
+
+
 def read_consult(img: MatLike) -> dict:
     """→ {"shelf": [{index, kind, card_id | drink_id, name, upgrade, price, sale, purchased, center}], "services": {...}, "rerolls_left"}。"""
     x0, y0, x1, y1 = REGION
@@ -101,21 +128,29 @@ def read_consult(img: MatLike) -> dict:
         return [t for t, (bx1, by1, bx2, by2) in boxes if xr[0] <= (bx1 + bx2) / 2 <= xr[1] and yr[0] <= (by1 + by2) / 2 <= yr[1]]
 
     shelf = []
+    verify_price = os.environ.get("HIRO_WINDOWS_SHOP_PRICE_VERIFY") == "1"
     for row, top in ((0, CARD_Y), (1, DRINK_Y)):
         for col, x in enumerate(COLS):
             xr = (x - 10, x + CELL + 10)
             item = _card(img, x) if row == 0 else _drink(img, x)
             nums = _nums(texts_in(xr, PRICE_BAND[top]))
             sale = len(nums) >= 2 or any("SALE" in t.upper().replace(" ", "") for t in texts_in(xr, SALE_BAND[top]))
+            if verify_price:
+                # Do not infer SALE from fragmented digits of an ordinary price.
+                sale = _sale_mark(img, x, top) or any("SALE" in t.upper().replace(" ", "") for t in texts_in(xr, SALE_BAND[top]))
             purchased = any("交換済" in t.replace(" ", "") for t in texts_in(xr, (top, top + CELL)))
-            shelf.append({"index": row * 4 + col, **item, "price": nums[-1] if nums else None, "sale": sale, "purchased": purchased,
+            price = (_verified_price(img, (x + (76 if sale else 50), PRICE_BAND[top][0] + 10, x + 115, PRICE_BAND[top][0] + 36))
+                     if verify_price else (nums[-1] if nums else None))
+            shelf.append({"index": row * 4 + col, **item, "price": price, "sale": sale, "purchased": purchased,
                           "center": [x + CELL // 2, top + CELL // 2]})  # fmt: skip
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     services = {}
     for name, xr in SERVICE_X.items():
         nums = _nums(texts_in(xr, SERVICE_BAND))
         sat = float(hsv[SERVICE_BAND[0] : SERVICE_BAND[1], xr[0] : xr[1], 1].mean())
-        services[name] = {"price": nums[-1] if nums else None, "available": sat >= SERVICE_SAT_MIN}
+        price = (_verified_price(img, (xr[1] - 100, SERVICE_BAND[0] + 6, xr[1] - 10, SERVICE_BAND[1] - 4))
+                 if verify_price else (nums[-1] if nums else None))
+        services[name] = {"price": price, "available": sat >= SERVICE_SAT_MIN}
     m = re.search(r"あと\s*(\d+)\s*回", "".join(texts_in((40, 260), REROLL_BAND)))
     # 正常货架下方有一行「持っているスキルカードの強化や削除ができます。」；购买后的获得动画、卡牌详情弹窗会盖住它
     complete = any("強化や削除" in t.replace(" ", "") for t in texts_in((40, 700), HINT_BAND))

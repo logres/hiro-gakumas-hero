@@ -17,6 +17,12 @@ def explicit_route_enabled() -> bool:
     return os.environ.get("HIRO_EXPLICIT_IDOL_STATE") == "1"
 
 
+def legacy_exam_policy(state) -> bool:
+    """Empirical やる気 constraints require a verified route in explicit mode."""
+    return (not explicit_route_enabled() or getattr(state, "recommended_effect", None)
+            == "ProduceExamEffectType_ExamCardPlayAggressive")
+
+
 def recommended_effect(idol_card_id: str | None) -> str | None:
     """Read IdolCard.examEffectType; absent/unknown data stays unknown."""
     if not idol_card_id:

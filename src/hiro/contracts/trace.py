@@ -9,8 +9,10 @@
 """
 
 import json
+import hashlib
+import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -45,7 +47,28 @@ class Step(Contract):
     events: list[Event] = field(default_factory=list)  # 1.2：本步产生 / 认出的事件
     predictions: list[Prediction] = field(default_factory=list)  # 1.2：事件之后的预测
     checks: list[Check] = field(default_factory=list)  # 1.2：互验结果（正常模式只写不一致的，调试模式全写）
+    exam_decision_input: dict[str, Any] | None = None  # 考试决策前 BattleState/ExamMemory 完整冻结输入；内部 schema_version 独立演进
     version: str = VERSION
+
+
+EXAM_REPLAY_FLAGS = ("HIRO_EXPLICIT_IDOL_STATE", "HIRO_EXAM_STRATEGY_REFERENCES", "HIRO_FINAL_TURN_SETUP",
+                     "HIRO_FALLBACK_DRINKS")
+
+
+def freeze_exam_decision_input(state, memory, legal, previews, *, advisor, source, idol_card_id):
+    """Copy the complete exam decision input before advisor mutates state/memory."""
+    payload = {
+        "battle_state": asdict(state), "exam_memory": memory.to_dict(),
+        "legal": [action.to_dict() for action in legal],
+        "previews": [preview.to_dict() for preview in previews or []],
+        "profile": asdict(advisor.profile) if is_dataclass(getattr(advisor, "profile", None)) else None,
+        "advisor": f"{type(advisor).__module__}.{type(advisor).__qualname__}",
+        "source": f"{type(source).__module__}.{type(source).__qualname__}",
+        "source_confidence": source.confidence(), "idol_card_id": idol_card_id,
+        "flags": {key: os.environ.get(key) == "1" for key in EXAM_REPLAY_FLAGS},
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"schema_version": "1.0", "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(), "input": payload}
 
 
 class TraceWriter:

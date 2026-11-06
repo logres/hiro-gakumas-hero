@@ -213,7 +213,8 @@ class Session:
         self._checks.extend(checks)
 
     def record(self, obs: Observation | None = None, *, decision: Decision | None = None, previews: list[Preview] | None = None,
-               execution: ExecutionResult | None = None, timings_ms: dict[str, float] | None = None) -> Step:  # fmt: skip
+               execution: ExecutionResult | None = None, timings_ms: dict[str, float] | None = None,
+               exam_decision_input: dict | None = None) -> Step:  # fmt: skip
         obs = obs or self.last
         assert obs is not None, "先 observe 再 record"
         idx = next((i for i, o in enumerate(self._buffer) if o is obs), None)
@@ -255,7 +256,7 @@ class Session:
         step = Step(seq=obs.seq, t=time.time(), observation=obs, state=state_in, events=events, predictions=preds, checks=checks,
                     state_after=None if state_in is self.state else self.state, decision=decision, previews=list(previews or []),
                     execution=execution, observations_before=before, observations_after=after, notes=list(self.notes),
-                    timings_ms=timings_ms)  # fmt: skip
+                    timings_ms=timings_ms, exam_decision_input=exam_decision_input)  # fmt: skip
         if execution is not None:
             self._last_exec_t = step.t
         self.notes = []

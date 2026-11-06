@@ -79,6 +79,18 @@ def expert_pick(state, live_why: str | None = None) -> ExpertPick:
         return ExpertPick(None, "no_previews")
     legal = set(state.legal_actions())
     cands = sorted((r for r in rows if r.get("legal_action") in legal), key=lambda r: -r["期望终局分"])
+    from hiro.brain.route_policy import legacy_exam_policy
+
+    # The empirical budget/hold/conflict rules below were validated on the
+    # legacy やる気 build. In explicit mode they must not override other routes
+    # (real qualify-2: R3 rejected an impression build's boost at 7 turns).
+    if not legacy_exam_policy(state):
+        if not cands:
+            return ExpertPick(None, "blocked_or_unmapped")
+        best = cands[0]
+        gap = best["期望终局分"] - cands[1]["期望终局分"] if len(cands) > 1 else None
+        d = Decision(best["legal_action"], "按已提供预演排序；未套用其他路线的预算/留牌规则", "expert")
+        return ExpertPick(d, None, best["期望终局分"], gap, violations(state, d), [])
     fired: list[dict] = []  # 硬规则拦下 / 改选的记录（实机 rec.log("hard_rule")，总控本战后统计）
 
     def apply(rule: str, keep, why: str) -> None:

@@ -31,6 +31,7 @@ from hiro.brain.rules import Decision
 from hiro.brain.cards import card_view, drink_view
 from hiro.brain.state import BattleState, ExamMemory
 from hiro.contracts import Action, Decision as DecisionContract, ExecutionResult
+from hiro.contracts.trace import freeze_exam_decision_input
 from hiro.perception.lesson import _read_int
 from hiro.produce import ops
 from hiro.recorder import Recorder
@@ -1126,6 +1127,11 @@ def run_exam(
             t_decide = time.monotonic()
             previews = source.previews(state)
             legal = [Action.from_legal(a) for a in state.legal_actions()]
+            exam_decision_input = None
+            if session is not None:
+                exam_decision_input = freeze_exam_decision_input(
+                    state, memory, legal, previews, advisor=advisor, source=source,
+                    idol_card_id=idol_card_id or (session.state.produce or {}).get("idol_card_id"))
             contract = advisor.decide(state, memory, previews, legal)
             d = contract.to_battle()
             rec.log("battle_decision", image=frame.img, exam=exam, source=source.confidence(), contract=contract.to_dict())
@@ -1140,7 +1146,7 @@ def run_exam(
                     contract.warnings.append(f"{what} 在画面上定位不到，本回合不再选它")
                     if session is not None:
                         session.recover("page_misjudged", f"局面与画面对不上：{d.action}（{what}），本回合禁用该动作")
-                        session.record(obs, decision=contract)
+                        session.record(obs, decision=contract, exam_decision_input=exam_decision_input)
                     _move_to_redo((time.monotonic() - t_decide) * 1000)
                     continue
                 todo = Decision(f"{d.kind}:{slot}", d.reason, d.source, d.plan, d.line, d.warnings)
@@ -1201,6 +1207,7 @@ def run_exam(
                     failures = 0
             if session is not None:
                 session.record(obs, decision=contract, previews=previews or [], execution=result,
+                               exam_decision_input=exam_decision_input,
                                timings_ms={"shot_to_tap": (t_tap - frame.t) * 1000, "decide": (t_tap - t_decide) * 1000,
                                            "wait_change": (t_done - t_tap) * 1000, "cycle": (t_done - t_cycle) * 1000,
                                            "anim_taps": _anim["taps"], **_take_phases()})  # fmt: skip

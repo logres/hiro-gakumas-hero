@@ -342,7 +342,7 @@
        "version"
       ],
       "additionalProperties": false,
-      "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.2')"
+      "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.3')"
      }
     },
     "version": {
@@ -1404,7 +1404,7 @@
        "version"
       ],
       "additionalProperties": false,
-      "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.2')"
+      "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.3')"
      }
     },
     "version": {
@@ -1491,7 +1491,7 @@
      "version"
     ],
     "additionalProperties": false,
-    "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.2')"
+    "description": "Event(seq: int, kind: str, origin: str, args: dict[str, typing.Any] = <factory>, basis: str = 'observe_only', confirmed: bool | None = None, ref: dict[str, typing.Any] = <factory>, confidence: float | None = None, note: str | None = None, version: str = '1.3')"
    }
   },
   "predictions": {
@@ -1575,7 +1575,7 @@
      "version"
     ],
     "additionalProperties": false,
-    "description": "Prediction(seq: int, event_seq: int, fields: dict[str, hiro.contracts.events.Expect] = <factory>, due: str = 'any', expires_after: int | None = None, version: str = '1.2')"
+    "description": "Prediction(seq: int, event_seq: int, fields: dict[str, hiro.contracts.events.Expect] = <factory>, due: str = 'any', expires_after: int | None = None, version: str = '1.3')"
    }
   },
   "checks": {
@@ -1627,8 +1627,15 @@
      "version"
     ],
     "additionalProperties": false,
-    "description": "Check(seq: int, field: str, predicted: Any = None, observed: Any = None, verdict: str = 'unpredicted', rule: str = 'prediction', action: str = 'accept', retries: int = 0, note: str | None = None, version: str = '1.2')"
+    "description": "Check(seq: int, field: str, predicted: Any = None, observed: Any = None, verdict: str = 'unpredicted', rule: str = 'prediction', action: str = 'accept', retries: int = 0, note: str | None = None, version: str = '1.3')"
    }
+  },
+  "exam_decision_input": {
+   "type": [
+    "object",
+    "null"
+   ],
+   "additionalProperties": {}
   },
   "version": {
    "type": "string"
@@ -1650,6 +1657,7 @@
   "events",
   "predictions",
   "checks",
+  "exam_decision_input",
   "version"
  ],
  "additionalProperties": false,

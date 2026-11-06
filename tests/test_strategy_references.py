@@ -84,13 +84,16 @@ def test_screen_source_injects_only_into_generic_identity_context(enabled, monke
     from hiro.defaults import exam_state
     from hiro.brain import exam_context
     monkeypatch.setattr(refs, "default_catalog", lambda: enabled)
-    monkeypatch.setattr(exam_context, "verified_exam_context", lambda *a: {"identity": "synthetic"})
+    monkeypatch.setattr(exam_context, "verified_exam_context", lambda *a: {
+        "identity": {"status": "verified_master", "recommended_effect": "ProduceExamEffectType_ExamReview"}})
     monkeypatch.setattr(exam_state, "screen_fields", lambda *a, **k: {"pitems": []})
     monkeypatch.setattr(exam_state, "screen_state", lambda *a, **k: battle())
     source = exam_state.ScreenExamStateSource()
     source.begin({"idol_card_id": "review-a", "exam": "qualify-1"})
     current, kind = source.read(NS(raw={"hand_layout": "normal"}, img=None), None)
     assert kind == "screen" and len(current.strategy_references) == 1
+    assert current.recommended_effect == "ProduceExamEffectType_ExamReview"
     source.profile = object()
     current, _ = source.read(NS(raw={"hand_layout": "normal"}, img=None), None)
     assert current.strategy_references == []
+    assert current.recommended_effect == "ProduceExamEffectType_ExamReview"

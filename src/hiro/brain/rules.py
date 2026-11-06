@@ -131,7 +131,11 @@ def _last_turn_violations(state: BattleState, decision: Decision) -> list[str]:
     if state.remaining_turns != 1:
         return []
     playable = _playable(state)
-    if decision.kind == "skip" and playable:
+    from hiro.brain.route_policy import legacy_exam_policy
+
+    # Playable does not mean profitable: an impression-cost motivation card
+    # can reduce the final settlement when no motivation payoff remains.
+    if decision.kind == "skip" and playable and legacy_exam_policy(state):
         cash = _cash_out_cards(state)
         hint = f"，其中能兑现的：{'、'.join(c.name for c in cash)}" if cash else ""
         return [f"最后一回合还有可打的牌（{'、'.join(c.name for c in playable)}{hint}），跳过等于白白放弃这些分数"]

@@ -112,16 +112,20 @@ class ScreenExamStateSource:
         state = screen_state(memory, self.profile, fields, frame, target_score=self.target_score, conflicts=diagnostics)
         from hiro.brain.route_policy import explicit_route_enabled
 
-        if self.profile is None and explicit_route_enabled():
+        if explicit_route_enabled():
             from hiro.brain.exam_context import verified_exam_context
 
             produce = (self.session.state.produce or {}) if self.session is not None else {}
-            identity = produce.get("idol_card_id") or self.idol_card_id
+            identity = produce.get("idol_card_id") or self.idol_card_id or getattr(self.profile, "idol_id", None)
             facts = verified_exam_context(identity, fields.get("pitems"))
-            context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
-            state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
-            from hiro.brain.strategy_references import select_references
-            state.strategy_references = select_references(identity, state.exam)
+            identity_fact = facts.get("identity") or {}
+            state.recommended_effect = (identity_fact.get("recommended_effect")
+                                        if identity_fact.get("status") == "verified_master" else None)
+            if self.profile is None:
+                context_text = "已验证主数据与本帧装备识别：" + json.dumps(facts, ensure_ascii=False)
+                state.public_info = "\n".join(p for p in (state.public_info, context_text) if p)
+                from hiro.brain.strategy_references import select_references
+                state.strategy_references = select_references(identity, state.exam)
         return state, "screen"
 
     def confidence(self) -> str:

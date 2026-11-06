@@ -137,6 +137,9 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
     if page == "SKILL_CARD_CHANGE_1":
         return _wait(page, "非やる気路线：换卡第一页不应进入；等待人工确认")
     if page == "CONSULT":
+        from hiro.brain.mechanism_consult import compare, enabled
+        if enabled():
+            return compare(decider, state, identity)
         return _decision(Action(ActionKind.SHOP_END), "非やる気路线：尚无适用的相談购买/删卡规则，结束相談", page)
     if page == "SPECIAL_GUIDANCE":
         return _decision(Action(ActionKind.CUSTOMIZE_END), "非やる気路线：尚无适用的特別指導定制规则，结束", page)

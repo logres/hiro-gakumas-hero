@@ -24,7 +24,7 @@ import numpy as np
 from cv2.typing import MatLike
 
 GRID_REGION = (0, 600, 720, 1000)
-SCROLL_REGION, SCROLL_X = (0, 625, 720, 1000), 702  # 卡格右侧滑块：刚进来 636–763（在顶），滚动后 730–858
+SCROLL_REGION, SCROLL_X = (0, 625, 720, 988), 702  # guidance track ends at y988; bottom thumb ends y975 (13px margin)
 LABEL_BOX = (20, 20, 210, 80)  # 左上角行动标签「特別指導」
 MENU_COLS = ((30, 250), (250, 470), (470, 690))
 DETAIL_NAME_Y = (165, 220)  # 选中卡 / 当前卡的卡名

@@ -198,3 +198,16 @@ def test_options_decline_all_and_wait_do_not_end_guidance(setup, action):
     result, _ = run_options(setup, two_reviews(setup), {"action": action, "reason": "reviewed alternatives considered"})
     assert result.action.kind is ActionKind.WAIT
     assert result.action.args["choice"] == action
+
+
+def test_customized_card_requires_current_image_effect_review(setup):
+    state, review = setup
+    review["selected_card"]["customized"] = True
+    result, _ = run(setup)
+    assert result.action.kind is ActionKind.WAIT
+    review["current_effects_observed"] = True
+    result, llm = run(setup)
+    assert result.action.kind is ActionKind.CUSTOMIZE_CARD
+    payload = json.loads(llm.calls[0][1])
+    assert payload["customize_review"]["current_effects_observed"] is True
+    assert "screenshot" in payload["effect_basis"]

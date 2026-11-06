@@ -37,7 +37,7 @@ def build_context(state, identity, review, master, *, allow_unaffordable=False):
     card = review.get("selected_card") or {}
     menu = review.get("menu") or {}
     cid, up = card.get("card_id"), card.get("upgrade")
-    if (not isinstance(cid, str) or not cid or type(up) is not int or up < 0 or card.get("customized") is not False):
+    if (not isinstance(cid, str) or not cid or type(up) is not int or up < 0 or (card.get("customized") is not False and review.get("current_effects_observed") is not True)):
         return None
     items = menu.get("items")
     if not isinstance(items, list) or any(not isinstance(it, dict) for it in items):

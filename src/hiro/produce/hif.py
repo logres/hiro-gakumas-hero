@@ -252,6 +252,16 @@ class HiroHifStrategy(HifGrindStrategy):
             self.s.recover("tap_no_effect", f"特別指導 没进去：{res.error}")
             logger.warning("特別指導 没进去：%s", res.error)
             return False
+        from hiro.brain.mechanism_customize import enabled as mechanism_customize_enabled
+        if mechanism_customize_enabled():
+            from hiro.produce.guidance_session import run
+            identity = ((self.s.state.produce or {}).get("idol_card_id")
+                        or getattr(self.deciders, "idol_card_id", None))
+            try:
+                return run(self.s, self.deciders, identity, device=device, leave=sg.leave)
+            except ValueError as exc:
+                self._stop("SPECIAL_GUIDANCE", str(exc))
+                return False
         for _ in range(self.MAX_CUSTOMIZE_STEPS):
             t0 = time.monotonic()
             # 进入后有「移動中」转场（q11：转场帧上读卡，判「可定制的卡未识别」直接结束，之后退不出来空转 3 分钟）：等到卡格读出来再决策

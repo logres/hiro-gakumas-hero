@@ -2,6 +2,7 @@ import http.client
 import json
 import io
 import errno
+import socket
 import threading
 from email.message import Message
 
@@ -131,27 +132,39 @@ def test_local_http_auth_and_transport(session, headers, body, expected):
     with BrokerHTTPServer(session, "secret") as server:
         thread = threading.Thread(target=server.handle_request)
         thread.start()
-        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        connection = None
         try:
             try:
-                connection.request("POST", "/rpc", body, headers)
+                connection = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
             except PermissionError:
                 pytest.skip("App sandbox blocks loopback connections")
             try:
-                response = connection.getresponse()
+                payload = body.encode("utf-8")
+                request_headers = {"Host": "127.0.0.1", "Content-Length": str(len(payload)), **headers}
+                request = "POST /rpc HTTP/1.1\r\n" + "".join(
+                    f"{name}: {value}\r\n" for name, value in request_headers.items())
+                # Send headers and body together: http.client.request otherwise
+                # races an early rejection against its separate body write.
+                connection.sendall(request.encode("ascii") + b"\r\n" + payload)
+                response = http.client.HTTPResponse(connection)
+                response.begin()
                 assert response.status == expected
                 assert response.getheader("Connection") == "close"
                 assert json.loads(response.read())["ok"] == (expected == 200)
             except OSError as exc:
-                # Rejecting Content-Length without consuming an oversized body
-                # can reset TCP before the 400 reaches a Windows client. Only
-                # this known rejection may close without an HTTP response.
+                # Early auth/size rejection deliberately leaves the body unread.
+                # Windows may reset TCP before that rejection response arrives;
+                # direct-handler tests below verify both rejection paths without
+                # reading the body or dispatching. Other resets still fail.
                 oversized = expected == 400 and len(body.encode()) > MAX_BODY
+                unauthorized = expected == 403 and (
+                    headers.get("Authorization") != "Bearer secret" or "Origin" in headers)
                 reset = getattr(exc, "winerror", None) in (10053, 10054) or exc.errno == errno.ECONNRESET
-                if not (oversized and reset):
+                if not ((oversized or unauthorized) and reset):
                     raise
         finally:
-            connection.close()
+            if connection:
+                connection.close()
             thread.join(5)
         assert not thread.is_alive()
     assert session.device.inputs == []
@@ -200,3 +213,25 @@ def test_oversized_handler_rejects_before_read_or_dispatch(session):
     handler.do_POST()
     assert replies == [(400, {"ok": False, "error": "Invalid payload size"})]
     assert session.device.inputs == []
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"},
+    {"Authorization": "Bearer secret", "Origin": "null"}])
+def test_unauthorized_handler_rejects_before_read_or_dispatch(headers):
+    from types import SimpleNamespace
+    handler = object.__new__(BrokerHandler)
+    handler.path = "/rpc"
+    handler.headers = Message()
+    handler.headers["Content-Length"] = "16"
+    for name, value in headers.items():
+        handler.headers[name] = value
+
+    def unexpected(*args):
+        pytest.fail("Unauthorized request must not read its body or dispatch an operation")
+
+    handler.rfile = SimpleNamespace(read=unexpected)
+    handler.server = SimpleNamespace(session=SimpleNamespace(dispatch=unexpected), token="secret")
+    replies = []
+    handler.reply = lambda *args: replies.append(args)
+    handler.do_POST()
+    assert replies == [(403, {"ok": False, "error": "Unauthorized request"})]

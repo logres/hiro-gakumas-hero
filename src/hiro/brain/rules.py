@@ -145,6 +145,9 @@ def _last_turn_violations(state: BattleState, decision: Decision) -> list[str]:
     cash = [c for c in _cash_out_cards(state) if c.slot != card.slot]
     if not cash or state.gives_action(card) or card.tags.genki_score_pct or card.tags.impression_score_pct:
         return []
+    if not legacy_exam_policy(state):
+        if _cash_costs_unproven(cash) or _direct_badge_not_proven_worse(card, cash, 1):
+            return []
     return [f"最后一回合只剩 1 次行动，{card.name} 不兑现也不追加行动；应打兑现牌 {'、'.join(c.name for c in cash)}，"
             f"否则元気 {state.genki if state.genki is not None else '?'} / 好印象 {state.impression if state.impression is not None else '?'} 全部浪费"]
 
@@ -287,12 +290,44 @@ def _cash_value(state: BattleState, card) -> int | None:
     return card.badge_score if card.badge_score is not None else state.cash_formula(card)
 
 
+def _cash_costs_unproven(cards) -> bool:
+    """Cash-only totals omit lost impression settlement and unknown costs."""
+    for card in cards:
+        cost = card.extra_cost
+        if cost is None:
+            continue
+        if not isinstance(cost, dict):
+            return True
+        kind, value = cost.get("type"), cost.get("value")
+        if (kind not in ("ExamCostType_ExamReview", "ExamCostType_ExamCardPlayAggressive")
+                or type(value) is not int or value < 0):
+            return True
+        if kind == "ExamCostType_ExamReview" and value > 0:
+            return True
+    return False
+
+
+def _direct_badge_not_proven_worse(card, cash, actions: int) -> bool:
+    """An incomplete cash-only estimate cannot displace observed direct output."""
+    if card.tags.genki_score_pct or card.tags.impression_score_pct or type(card.badge_score) is not int:
+        return False
+    if any(type(c.badge_score) is not int for c in cash):
+        return True  # formula omits modifiers; unknown is not zero
+    upper = sum(sorted((c.badge_score for c in cash), reverse=True)[:actions])
+    return card.badge_score > upper
+
+
 def final_turn_plan(state: BattleState) -> dict | None:
     """最后一回合（画面剩余 1）的最佳兑现：耗行动的牌只能再打 actions_left 张，按真实得分挑；清空元气的终结牌放最后，
     最多一张（清空后别的元気牌没分）。不耗行动的牌（使用数追加 / 触发固有道具）不占名额。没有可兑现的牌时返回 None。"""
     if state.remaining_turns != 1:
         return None
-    cash = [(c, _cash_value(state, c)) for c in _cash_out_cards(state) if not state.gives_action(c)]
+    candidates = [c for c in _cash_out_cards(state) if not state.gives_action(c)]
+    from hiro.brain.route_policy import legacy_exam_policy
+
+    if not legacy_exam_policy(state) and _cash_costs_unproven(candidates):
+        return None
+    cash = [(c, _cash_value(state, c)) for c in candidates]
     cash = [(c, v) for c, v in cash if v]
     if not cash:
         return None
@@ -317,6 +352,11 @@ def final_turn_override(state: BattleState, decision: Decision) -> Decision | No
     if decision.kind == "play":
         card = next((c for c in state.hand if c.slot == decision.slot), None)
         if card is None or state.gives_action(card):
+            return None
+        from hiro.brain.route_policy import legacy_exam_policy
+
+        if (not legacy_exam_policy(state) and decision.action in state.legal_actions()
+                and _direct_badge_not_proven_worse(card, plan["cards"], plan["actions"])):
             return None
         # The cash-only plan does not simulate setup -> cash-out. With another
         # action available it cannot prove that spending one action on a buff is

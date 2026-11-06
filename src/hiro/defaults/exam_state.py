@@ -23,6 +23,33 @@ from hiro.brain.state import BattleState, ExamMemory, exam_kwargs
 OVERLAY_LAYOUTS = ("overlay",)
 
 
+def hand_customization_context(hand, produce: dict) -> dict:
+    """Exact owned versions qualify catalog hand text; a pending deck is still evidence of uncertainty.
+
+    The deck ledger records customization, not verified resulting effects. Do not
+    reconstruct effects from customize IDs, decision reasons, or preview offers.
+    """
+    cards = []
+    for card in hand:
+        if not card.card_id or type(card.upgrade) is not int:
+            continue
+        matches = [owned for owned in (produce.get("deck") or [])
+                   if isinstance(owned, dict) and owned.get("card_id") == card.card_id
+                   and type(owned.get("upgrade")) is int and owned["upgrade"] == card.upgrade]
+        if not any(owned.get("customized") is True for owned in matches):
+            continue
+        certain = all(owned.get("customized") is True for owned in matches)
+        cards.append({"slot": card.slot, "card_id": card.card_id, "upgrade": card.upgrade,
+                      "customization_status": "customized" if certain else "ambiguous_owned_copies",
+                      "effect_basis": "catalog_base_definition",
+                      "actual_effects_status": "unknown", "customization_effects_known": False,
+                      "evidence_source": "produce.deck"})
+    return {"cards": cards,
+            "note": "所列手牌对应已定制的持有版本；同版本多副本可能无法定位具体手牌。"
+                    "这些手牌的 text、cost、hp_cost、extra_cost、tags 仍来自未定制主数据，"
+                    "不能当作本局定制后的实际效果、费用或条件；实际效果尚未验证。"}
+
+
 def read_screen(img) -> dict:
     """识别层的考试读数；识别异常不能打断考试，返回 {error}，observation 会把它记进 field_meta。"""
     try:
@@ -118,6 +145,9 @@ class ScreenExamStateSource:
             produce = (self.session.state.produce or {}) if self.session is not None else {}
             identity = produce.get("idol_card_id") or self.idol_card_id or getattr(self.profile, "idol_id", None)
             facts = verified_exam_context(identity, fields.get("pitems"))
+            customization = hand_customization_context(getattr(state, "hand", []), produce)
+            if customization["cards"]:
+                facts["hand_customization"] = customization
             identity_fact = facts.get("identity") or {}
             state.recommended_effect = (identity_fact.get("recommended_effect")
                                         if identity_fact.get("status") == "verified_master" else None)

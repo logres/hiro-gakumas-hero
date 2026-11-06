@@ -367,7 +367,7 @@ class ProduceDeciders:
         identity = (state.produce or {}).get("idol_card_id") or self.idol_card_id or (self.profile.idol_id if self.profile else None)
         return legacy_or_yaruki(identity)
 
-    def _select_card_for_selected_idol(self, state: GameState) -> Decision:
+    def _select_card_for_selected_idol(self, state: GameState, *, allow_model: bool = True) -> Decision:
         """Use catalog recommendation metadata without importing another route's tiers."""
         from hiro.brain.hif_rules import is_recommended
         from hiro.state.catalog import CatalogUnavailable
@@ -387,7 +387,11 @@ class ProduceDeciders:
         for card in (state.produce or {}).get("deck") or []:
             cid = card.get("card_id") if isinstance(card, dict) else card.card_id
             upgrade = card.get("upgrade", 0) if isinstance(card, dict) else card.upgrade
-            owned[cid] = max(owned.get(cid, -1), upgrade)
+            if type(upgrade) is int and upgrade >= 0:
+                previous = owned.get(cid)
+                owned[cid] = max(previous, upgrade) if type(previous) is int else upgrade
+            else:
+                owned.setdefault(cid, None)  # identity known, upgrade unknown; never invent +0
         for cid in getattr(self, "seen_deck", {}) or {}:
             owned.setdefault(cid, 0)
         for cid in self.picked_musts:
@@ -420,7 +424,7 @@ class ProduceDeciders:
         def priority(i):
             card = raw[i]
             return (confirmed_gap and i in cashouts, metadata[i][0], card["card_id"] not in owned, i in cashouts,
-                    card["upgrade"] > owned.get(card["card_id"], -1), card["upgrade"], metadata[i][1],
+                    type(owned.get(card["card_id"], -1)) is int and card["upgrade"] > owned.get(card["card_id"], -1), card["upgrade"], metadata[i][1],
                     isinstance(recommended, int) and not isinstance(recommended, bool) and i == recommended)
         best_rank = max(priority(i) for i in eligible)
         tied = [i for i in eligible if priority(i) == best_rank]
@@ -431,11 +435,18 @@ class ProduceDeciders:
             reason = role_reason + "；" + reason
         if len(tied) > 1:
             reason += f"；依据相同，按 card_id 排序取 {raw[chosen]['card_id']}"
-        return Decision(Action.activate_effect(chosen), reason, "rule", 0.85, candidates, decider="select_card")
+        baseline = Decision(Action.activate_effect(chosen), reason, "rule", 0.85, candidates, decider="select_card")
+        if allow_model:
+            from hiro.brain.mechanism_card_selection import compare
+            return compare(self, state, idol, catalog_rows, catalog(), baseline)
+        return baseline
 
     def select_card(self, state: GameState, *, change: bool = False) -> Decision:
-        if not self._uses_yaruki_policy(state):
+        from hiro.brain.mechanism_card_selection import enabled
+        if enabled() and not change:
             return self._select_card_for_selected_idol(state)
+        if not self._uses_yaruki_policy(state):
+            return self._select_card_for_selected_idol(state, allow_model=not change)
         from hiro.state.context import for_llm, preview_card_pick, situation, to_previews
 
         raw = [c for c in state.page_fields.get("candidates") or []]

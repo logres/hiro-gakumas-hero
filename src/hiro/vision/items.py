@@ -9,6 +9,7 @@ P 道具是半透明叠在场景上的，身后的气球等大块背景会把直
 """
 
 import json
+import os
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -214,16 +215,28 @@ def read_drinks(img: MatLike, *, cache: RegionCache | None = None) -> list[dict 
 def read_pitems(img: MatLike, *, cache: RegionCache | None = None) -> list[dict]:
     """P 道具列（牌库图标下方，向下排列）。cache：整列与上次相同则复用。"""
     x0, y0 = PITEM_TOP_LEFT
-    region = img[y0 : y0 + PITEM_PITCH * (PITEM_MAX - 1) + PITEM_SIZE + 12, x0 : x0 + PITEM_SIZE]
+    top = y0 - PITEM_PITCH - 4 if os.environ.get("HIRO_PITEM_COMPACT_HUD") == "1" else y0
+    region = img[top : y0 + PITEM_PITCH * (PITEM_MAX - 1) + PITEM_SIZE + 12, x0 : x0 + PITEM_SIZE]
     return cached(cache, "pitems", region, lambda: _read_pitems(img))
 
 
 def _read_pitems(img: MatLike) -> list[dict]:
+    old = _read_pitems_at(img, PITEM_TOP_LEFT[1], PITEM_MAX, (0,))
+    if os.environ.get("HIRO_PITEM_COMPACT_HUD") != "1":
+        return old
+    # Evaluate an additional layout using the same strict template thresholds.
+    # Only its first row is supported by observed frames. Never merge layouts:
+    # overlapping coordinates would otherwise duplicate a single physical icon.
+    compact = _read_pitems_at(img, PITEM_TOP_LEFT[1] - PITEM_PITCH, 1, range(-4, 5))
+    return max((old, compact), key=lambda result: result[0]["score"] if result else -1)
+
+
+def _read_pitems_at(img: MatLike, y0: int, count: int, first_offsets) -> list[dict]:
     lib = _library("pitem", PITEM_SIZE)
-    x0, y0 = PITEM_TOP_LEFT
+    x0 = PITEM_TOP_LEFT[0]
     out = []
-    for k in range(PITEM_MAX):
-        crops = [c for dy in ((0,) if k == 0 else range(-12, 13, 4)) if (c := _crop(img, x0, y0 + PITEM_PITCH * k + dy, PITEM_SIZE)) is not None]
+    for k in range(count):
+        crops = [c for dy in (first_offsets if k == 0 else range(-12, 13, 4)) if (c := _crop(img, x0, y0 + PITEM_PITCH * k + dy, PITEM_SIZE)) is not None]
         best = max(lib.match_many(crops), key=lambda top: top[0][0]) if crops else None
         if best is None or best[0][0] < MIN_SCORE or best[0][0] - best[1][0] < MIN_MARGIN:
             break

@@ -171,12 +171,26 @@ def read_stamina(img: MatLike) -> tuple[int, int] | None:
     if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
         # RapidOCR's overlapping segments can both include the same slash:
         # ["34/", "/45"]. Accept that overlap only as one complete fraction.
-        text = "".join(t for t, _ in ocr(crop, scale=1, languages=("en-US",))).replace(" ", "")
-        match = re.fullmatch(r"(\d+)/{1,2}(\d+)", text)
-        if match:
-            cur, cap = map(int, match.groups())
-            if cap > 0 and cur <= cap:
-                return cur, cap
+        # At native size 33/45 can instead overlap digits: ["33", "3/45"].
+        # Do not edit those digits; retry the same crop enlarged, which lets the
+        # detector recognize a single fraction, under the same strict checks.
+        for scale in (1, 4):
+            text = "".join(t for t, _ in ocr(crop, scale=scale, languages=("en-US",))).replace(" ", "")
+            match = re.fullmatch(r"(\d+)/{1,2}(\d+)", text)
+            if match:
+                cur, cap = map(int, match.groups())
+                if cap > 0 and cur <= cap:
+                    return cur, cap
+        # If the fraction detector overlaps digits or loses the slash, read the
+        # two numeric fields independently. Both slightly different crops of
+        # each field must agree; no digits are corrected or taken from state.
+        # read_dddd consumes exactly these boxes, without the font reader's
+        # MARGIN expansion into the slash or neighboring numeric field.
+        cur_votes = [read_dddd(img, box) for box in ((325, 50, 375, 94), (327, 48, 373, 96))]
+        cap_votes = [read_dddd(img, box) for box in ((387, 50, 435, 94), (389, 48, 433, 96))]
+        cur, cap = cur_votes[0], cap_votes[0]
+        if cur is not None and cap is not None and cur_votes[1] == cur and cap_votes[1] == cap and cap > 0 and 0 <= cur <= cap:
+            return cur, cap
         return None
     texts = []
     for scale in (4, 2):

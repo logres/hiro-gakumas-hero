@@ -114,6 +114,42 @@ def test_windows_stamina_allows_only_complete_fraction_with_slash_overlap(monkey
     from hiro.vision import action
     monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
     calls = []
+    monkeypatch.setattr(action, "read_dddd", lambda *a: None)
     monkeypatch.setattr(action, "ocr", lambda *a, **k: calls.append(k["scale"]) or [(t, .99) for t in tokens])
     assert action.read_stamina(np.zeros((1280, 720, 3), dtype=np.uint8)) == expected
-    assert calls == [1]
+    assert calls == ([1] if expected is not None else [1, 4])
+
+
+def test_windows_stamina_retries_overlapping_digits_without_guessing(monkeypatch):
+    from hiro.vision import action
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    calls = []
+
+    def ocr(crop, *, scale, languages):
+        calls.append(scale)
+        # Actual day-5 screenshot: native detector boxes overlap the second 3;
+        # at 4x the complete fraction is one recognition box.
+        tokens = ["33", "3/45"] if scale == 1 else ["33/45"]
+        return [(token, .99) for token in tokens]
+
+    monkeypatch.setattr(action, "ocr", ocr)
+    assert action.read_stamina(np.zeros((1280, 720, 3), dtype=np.uint8)) == (33, 45)
+    assert calls == [1, 4]
+
+
+@pytest.mark.parametrize("votes,expected", [
+    ([39, 39, 45, 45], (39, 45)), ([39, 38, 45, 45], None),
+    ([39, 39, 45, 44], None), ([None, None, 45, 45], None),
+    ([46, 46, 45, 45], None), ([0, 0, 0, 0], None),
+])
+def test_windows_stamina_digit_crops_need_independent_agreement(monkeypatch, votes, expected):
+    from hiro.vision import action
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    # Real 39/45 failure: native loses slash; enlarged detector overlaps 9.
+    monkeypatch.setattr(action, "ocr", lambda img, *, scale, **k:
+                        [(t, .99) for t in (["39", "145"] if scale == 1 else ["39", "9", "/45"])])
+    values = iter(votes)
+    boxes = []
+    monkeypatch.setattr(action, "read_dddd", lambda img, box: boxes.append(box) or next(values))
+    assert action.read_stamina(np.zeros((1280, 720, 3), dtype=np.uint8)) == expected
+    assert boxes == [(325, 50, 375, 94), (327, 48, 373, 96), (387, 50, 435, 94), (389, 48, 433, 96)]

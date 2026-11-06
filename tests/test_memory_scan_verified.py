@@ -64,7 +64,7 @@ def test_wait_rejects_stale_cell_and_requires_stable_panel(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(scan.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(scan.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
-    result = scan._wait_change(NS(screenshot=lambda: next(frames)), "old", 1, want_cell=(0, 1))
+    result = scan._wait_change(NS(screenshot=lambda: next(frames)), None, 1, want_cell=(0, 1))
     assert result[0] == (1, "new") and result[3]
     assert clock[0] == pytest.approx(0.9)
 
@@ -86,6 +86,22 @@ def test_cold_ocr_still_allows_two_stability_observations(monkeypatch):
     monkeypatch.setattr(scan.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
     assert scan._wait_change(NS(screenshot=lambda: None), None, 1)[3]
     assert reads[0] == 2
+
+
+def test_identical_detail_text_accepted_only_after_new_cell_verified(monkeypatch):
+    from hiro.vision import pages
+
+    monkeypatch.setenv("HIRO_MEMORY_SCAN_VERIFIED", "1")
+    frames = iter([(1, 0), (1, 0), (1, 1), (1, 1)])
+    monkeypatch.setattr(pages, "_texts", lambda im: PICKER + [("止められない想い", (200, 225, 440, 255))])
+    monkeypatch.setattr(memory, "detail_page", lambda boxes, img: 1)
+    monkeypatch.setattr(memory, "verified_selected_cell", lambda img: img)
+    clock = [0.0]
+    monkeypatch.setattr(scan.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scan.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    img, _, panel, ok = scan._wait_change(NS(screenshot=lambda: next(frames)), None, 1, want_cell=(1, 1))
+    assert ok and img == (1, 1) and panel == "止められない想い"
+    assert clock[0] == pytest.approx(0.9)
 
 
 @pytest.mark.parametrize("fail_at,clicks", [(1, []), (2, [(140, 647)]),

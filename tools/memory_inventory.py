@@ -99,27 +99,28 @@ def _live_verified(d, pages: int, frames_dir: Path) -> list[dict]:
     """Fail closed on cell/page transitions; never click the covered third row."""
     from hiro.vision.memory import merge_detail, read_memory_detail
 
-    def wait(page, cell=None, previous=None):
-        frame = _wait_change(d, previous, page, want_cell=cell)
+    def wait(page, cell=None):
+        # Different memories may grant exactly the same skill card. Verify the
+        # selected cell and stable page instead of requiring different text.
+        frame = _wait_change(d, None, page, want_cell=cell)
         if not frame[3]:
             raise MemoryScanPending(f"Memory picker cell {cell}, detail page {page} not verified; scanner stopped")
         return frame
 
-    out, seen, previous_p1, previous_p2 = [], set(), None, None
+    out, seen = [], set()
     for page in range(pages):
         new_on_page = 0
         for r, y in enumerate(GRID_Y[:2]):
             for c, x in enumerate(GRID_X):
                 wait(1)  # Verify the picker again before any cell input.
                 d.click(x, y)
-                img1, boxes1, panel1, _ = wait(1, (r, c), previous_p1)
+                img1, boxes1, _, _ = wait(1, (r, c))
                 d1 = read_memory_detail(img1, boxes1)
                 d.click(*PAGER_NEXT)
-                img2, boxes2, panel2, _ = wait(2, (r, c), previous_p2)
+                img2, boxes2, _, _ = wait(2, (r, c))
                 d2 = read_memory_detail(img2, boxes2)
                 d.click(*PAGER_PREV)
                 wait(1, (r, c))  # Complete the return before another cell click.
-                previous_p1, previous_p2 = panel1, panel2
                 rec = merge_detail(d1, d2)
                 sig = _signature(rec)
                 if sig in seen:

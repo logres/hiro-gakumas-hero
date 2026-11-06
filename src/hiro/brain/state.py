@@ -597,11 +597,17 @@ class BattleState:
                 observed["final_turn_permil"] = memory.attr_permil.get(idol_trend(profile.idol_id)[1][0])
             except KeyError:
                 pass
+        from hiro.brain.route_policy import explicit_route_enabled
+        charges = memory.item_charges_left
+        if profile is None and explicit_route_enabled():
+            # Generic automatic/turn-end triggers are not decremented by the
+            # legacy card-trigger counter. A historical count is not current.
+            charges = observed.get("pitem_charges")
         return cls(
             exam=memory.exam,
             turn=memory.turn,
             max_hp=profile.max_hp if profile else None,
-            item_charges_left=memory.item_charges_left,
+            item_charges_left=charges,
             actions_left=memory.actions_left,
             installed=list(memory.installed),
             this_turn=list(memory.this_turn),

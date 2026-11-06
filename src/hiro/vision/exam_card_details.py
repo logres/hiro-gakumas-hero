@@ -39,12 +39,26 @@ def _selected(img, cards):
     return hot[0] if len(hot) == 1 else None
 
 
-def read_exam_hand_details(img: MatLike) -> dict:
+def is_exam_card_list(img: MatLike) -> bool:
+    """Verify only the modal title and active tab, without reading its contents."""
+    if img.shape[:2] != (1280, 720):
+        return False
+    if deck.is_deck_list(img):
+        return True
+    if not deck._tab_active(img):
+        return False
+    return any(re.sub(r"\s", "", line["text"]) == "所持スキルカード"
+               for line in _lines(img, (40, 25, 300, 90)))
+
+
+def read_exam_hand_details(img: MatLike, *, include_detail: bool = True) -> dict:
     """Read visible hand cells and the current detail without controlling a device.
 
     Coordinates: boxes/hand_region are global xyxy; card rects are xywh.
     layout_complete concerns visible hand count only; semantic_complete is
     always False. A detail belongs to a hand cell only with a unique cursor.
+    include_detail=False reads fresh layout/art identities without effect OCR;
+    callers needing unresolved identity recovery must rerun the full reader.
     """
     out = dict(active=False, hand_count=None, hand_region=None, headings=[], cards=[],
                selected=None, selected_card=None, detail=None, agree=None,
@@ -53,13 +67,12 @@ def read_exam_hand_details(img: MatLike) -> dict:
     if img.shape[:2] != (1280, 720):
         out["problems"].append("expected normalized 720x1280 screenshot")
         return out
-    title = _lines(img, (40, 25, 300, 90))
-    title_ok = any(re.sub(r"\s", "", line["text"]) == "所持スキルカード" for line in title)
-    if not (deck.is_deck_list(img) or (title_ok and deck._tab_active(img))):
+    if not is_exam_card_list(img):
         out["problems"].append("owned-card title and active skill-card tab not verified")
         return out
     out["active"] = True
-    out["detail_lines"] = _lines(img, DETAIL_REGION)
+    if include_detail:
+        out["detail_lines"] = _lines(img, DETAIL_REGION)
     for line in _lines(img, deck.LIST_VIEW):
         text = re.sub(r"\s", "", line["text"]).replace("（", "(").replace("）", ")")
         match = re.fullmatch(r"(手札|山札|捨札)\((\d+)\)", text)

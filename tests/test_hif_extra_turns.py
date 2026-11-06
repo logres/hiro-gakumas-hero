@@ -45,7 +45,7 @@ def test_fast_and_full_share_total_and_preserve_unknown(monkeypatch):
 
 
 def test_recorded_extra_final_turn_resets_memory():
-    frames = Path("traces/windows-qualify-04-r15/frames")
+    frames = Path(__file__).resolve().parents[1] / "traces/windows-qualify-04-r15/frames"
     if not all((frames / f"{n:05}.jpg").exists() for n in (55, 56, 58)):
         pytest.skip("local trace screenshots not distributed")
     values = [hif.read_hif_hud(cv2.imread(str(frames / f"{n:05}.jpg")))["remaining_turns"]
@@ -78,3 +78,33 @@ def test_executor_frame_uses_total_and_never_falls_back_to_main(monkeypatch):
     assert exam.Frame(capsule()).remaining == 13
     assert exam.Frame(capsule("")).remaining is None
     assert exam._hud_int(capsule(""), hif.BOX_TURNS, None) is None
+
+def test_tiny_blue_edge_scenery_does_not_poison_visible_digit():
+    img = capsule("1")
+    # White background joins the pill, with disconnected blue scenery at its edge.
+    img[120:156, 95:178] = (255, 255, 255)
+    original = capsule("1")
+    blue = (255, 180, 0)
+    mask = np.any(original != 0, axis=2) & np.any(original != 255, axis=2)
+    img[mask] = original[mask]
+    img[125:133, 176:178] = blue
+    assert hif.read_extra_turns(img) == 1
+
+
+def test_interior_unknown_glyph_stays_unknown():
+    img = capsule("1")
+    img[130:138, 164:166] = (255, 180, 0)
+    assert hif.read_extra_turns(img) is None
+
+
+def test_recorded_scenery_beside_extra_turn_capsule():
+    paths = [Path("traces/windows-qualify-04-r20/frames/00005.jpg"),
+             Path("reports/runs/20261107-061134/frames/00030-battle_decision.jpg")]
+    paths = [Path(__file__).resolve().parents[1] / path for path in paths]
+    if not all(path.exists() for path in paths):
+        pytest.skip("local trace screenshots not distributed")
+    for path in paths:
+        img = cv2.imread(str(path))
+        assert hif.read_extra_turns(img) == 1
+        assert hif.read_remaining_turns(img) == 3
+

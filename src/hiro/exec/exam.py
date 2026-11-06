@@ -1066,7 +1066,8 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
         if current != facts:
             differences = {key: {"before": value, "after": current.get(key) if current else None}
                            for key, value in facts.items() if current is None or current.get(key) != value}
-            rec.log("exam_card_detail_state_changed", image=frame.img, differences=differences)
+            rec.log("exam_card_detail_state_changed", image=image, differences=differences,
+                    baseline_sha256=image_sha256(frame.img))
         return current == facts
     result = review_exam_hand_details(
         frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,

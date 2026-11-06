@@ -67,3 +67,32 @@ def test_no_cursor_does_not_attribute_detail(monkeypatch):
     result = reader.read_exam_hand_details(np.zeros((1280,720,3),np.uint8))
     assert result["detail"] is not None
     assert result["selected_card"] is None
+
+
+def test_layout_only_omits_effect_ocr_but_keeps_fresh_cards(monkeypatch):
+    calls = setup(monkeypatch)
+    original = reader._lines
+    regions = []
+    monkeypatch.setattr(reader, "_lines", lambda img, region:
+                        regions.append(region) or original(img, region))
+    result = reader.read_exam_hand_details(np.zeros((1280,720,3), np.uint8), include_detail=False)
+    assert result["layout_complete"] and result["identities_complete"]
+    assert result["detail_lines"] == [] and result["detail"] is None
+    assert regions == [reader.deck.LIST_VIEW]
+    assert calls == [(0,452,720,630)]
+
+
+def test_active_template_match_needs_no_ocr(monkeypatch):
+    monkeypatch.setattr(reader.deck, "is_deck_list", lambda _: True)
+    monkeypatch.setattr(reader, "_lines", lambda *_: pytest.fail("unused OCR"))
+    assert reader.is_exam_card_list(np.zeros((1280,720,3), np.uint8))
+
+
+@pytest.mark.parametrize("title,tab,expected", [
+    ("所持 スキルカード", True, True), ("所持スキルカード詳細", True, False),
+    ("所持スキルカード", False, False)])
+def test_active_exact_title_fallback_requires_active_tab(monkeypatch, title, tab, expected):
+    monkeypatch.setattr(reader.deck, "is_deck_list", lambda _: False)
+    monkeypatch.setattr(reader.deck, "_tab_active", lambda _: tab)
+    monkeypatch.setattr(reader, "_lines", lambda *_: [{"text": title}])
+    assert reader.is_exam_card_list(np.zeros((1280,720,3), np.uint8)) is expected

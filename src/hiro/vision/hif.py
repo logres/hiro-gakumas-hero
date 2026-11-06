@@ -876,7 +876,12 @@ def read_extra_turns(img: MatLike) -> int | None:
     blue[:max(0, 5-y)] = 0
     blue[max(0, 30-y):] = 0
     _, labels, stats, _ = cv2.connectedComponentsWithStats(blue)
-    components = sorted((s[0], i, s) for i, s in enumerate(stats[1:], 1) if s[4] >= 10)
+    # Bright scenery can join the pill's white component and leave tiny blue
+    # fragments on its bounding edge. Actual +N glyphs are interior (about
+    # 14–19px tall); keep every interior fragment, including unreadable ones.
+    components = sorted((s[0], i, s) for i, s in enumerate(stats[1:], 1)
+                        if s[4] >= 10 and not
+                        (s[4] <= 20 and s[3] < 10 and (s[0] == 0 or s[0] + s[2] == w)))
     templates = _templates()
     digits = []
     for index, (_, label, s) in enumerate(components):
@@ -958,3 +963,4 @@ def _read_hif_exam(img: MatLike, cache: RegionCache | None) -> dict:
     if out["finals"] and out.get("finals_round") is None and (out.get("remaining_turns") or 0) > 9:
         out["finals_round"] = 2  # NPC 分数被特效挡住时：剩余回合 > 9 只可能是 R2（R1 9 回合、R2 12 回合）
     return out
+

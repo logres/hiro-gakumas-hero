@@ -11,7 +11,8 @@ class Image:
         return self.name.encode()
 
 
-def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False):
+def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False,
+        fast_calls=None, unresolved_layout=False):
     current = Image("exam")
     taps = []
     hand = [SimpleNamespace(slot=0, card_id="a", upgrade=1),
@@ -25,6 +26,8 @@ def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False):
         current = Image({(1, 1): "modal", (10, 10): "b", (20, 20): "a", (9, 9): "changed" if changed else "exam"}[point])
 
     def read(image):
+        if fast_calls is not None:
+            fast_calls.append(("full", image))
         active = image.name not in ("exam", "changed")
         chosen = next((c for c in cells if c["card_id"] == image.name), None)
         identity = {"card_id": "wrong" if mismatch else image.name, "upgrade": 1}
@@ -32,11 +35,30 @@ def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False):
                     selected=chosen["index"] if chosen else None, selected_card=identity,
                     detail=identity, agree=True, detail_lines=[{"text": "元気+7"}])
 
+    fast = {}
+    if fast_calls is not None:
+        def layout(image):
+            # Use the same synthetic facts without counting this as full OCR.
+            result = read(image)
+            fast_calls.pop()
+            fast_calls.append(("layout", image))
+            result["cards"] = [dict(c) for c in result["cards"]]
+            if unresolved_layout:
+                result["cards"][1]["card_id"] = None
+            result["detail_lines"] = []
+            return result
+
+        def active(image):
+            fast_calls.append(("active", image))
+            return image.name not in ("exam", "changed")
+
+        fast = dict(read_layout=layout, is_active=active)
+
     initial = current
     result = review_exam_hand_details(initial, hand, shoot=lambda: current, click=click,
         sleep=lambda _: None, same_state=lambda im: im.name == "exam",
         read_details=read, find_button=lambda _: (1, 1),
-        close_buttons=lambda _: [] if missing_close else [(9, 9)], max_polls=2)
+        close_buttons=lambda _: [] if missing_close else [(9, 9)], max_polls=2, **fast)
     return result, taps, initial
 
 
@@ -90,3 +112,22 @@ def test_open_button_is_recognized_on_fresh_frame():
         same_state=lambda _: True, read_details=lambda _: {},
         find_button=lambda image: seen.append(image) or None)
     assert result.restored and seen == [fresh]
+
+
+def test_fast_paths_still_fully_read_each_selected_detail():
+    calls = []
+    result, _, _ = run(fast_calls=calls)
+    assert result.restored and len(result.evidence) == 2
+    assert [image.name for kind, image in calls if kind == "full"] == ["a", "b"]
+    assert sum(kind == "layout" for kind, _ in calls) == 3
+    assert [image.name for kind, image in calls if kind == "active"] == ["b", "exam"]
+
+
+def test_unresolved_layout_recovers_using_full_reader_on_same_frame():
+    calls = []
+    result, _, _ = run(fast_calls=calls, unresolved_layout=True)
+    assert result.restored and len(result.evidence) == 2
+    for index, (kind, image) in enumerate(calls):
+        if kind == "layout" and index > 0:
+            assert calls[index + 1][0] == "full"
+            assert calls[index + 1][1] is image

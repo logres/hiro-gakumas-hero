@@ -1690,6 +1690,23 @@ class HiroHifStrategy(HifGrindStrategy):
         logger.info("本战轮次结果（%s）：第 %s 轮，我方第 %s 名，总分 %s，本轮得分 %s；全员 %s", f.get("kind"), f.get("finals_round"), f.get("rank"),
                     f.get("score"), f.get("round_score"), [(e.get("rank"), e.get("name"), e.get("score"), e.get("round_score")) for e in f.get("entries") or []])  # fmt: skip
 
+    def resume_qualify_result(self, img) -> bool:
+        """Resume a visible qualifying result using its observed exam number."""
+        from hiro.vision.hif import is_hif_result, read_hif_result
+
+        if self.scenario != HifScenario.QUALIFY or not is_hif_result(img):
+            return False
+        result = read_hif_result(img)
+        number, passed = result.get("exam_no"), result.get("passed")
+        if type(number) is not int or number not in (1, 2, 3) or type(passed) is not bool:
+            raise ResumeBlocked("选拔结果的场次或突破 / 敗退未确认，不自动继续")
+        self.exam_count = HiroHifStrategy.exams_done = number
+        label = f"qualify-{number}"
+        self.s.state.exam_session.label = label
+        if not self._retry_if_failed(label):
+            self._finish_exam(label)
+        return True
+
     def on_exam_entered(self, ctx: "ExamContext"):
         label = self._battle_label(ctx)
         self.rec.log("exam_enter", image=device.screenshot(), exam=label)
@@ -1706,6 +1723,10 @@ class HiroHifStrategy(HifGrindStrategy):
         if self._retry_if_failed(label):
             return  # 已点「再挑戦」：考试重开，主循环会再次进入 on_exam_entered
 
+        self._finish_exam(label)
+
+    def _finish_exam(self, label: str) -> None:
+        """Advance existing exam result pages after retry handling."""
         recorded_ranking = set()
         deadline = time.monotonic() + EXAM_END_LOOP_TIMEOUT
         for _ in Loop():

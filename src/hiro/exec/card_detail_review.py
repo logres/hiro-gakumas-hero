@@ -37,7 +37,8 @@ def _identity(card):
 
 def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                              same_state, read_details=None, find_button=None,
-                             close_buttons=None, on_detail=None, max_polls=8, poll_gap=0.2):
+                             close_buttons=None, on_detail=None, read_layout=None,
+                             is_active=None, max_polls=8, poll_gap=0.2):
     """Inspect unambiguous identities, close once, verify full decision state.
 
     ``same_state(image)`` must compare the complete observed decision state to
@@ -45,8 +46,16 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
     ``click`` accepts one recognized (x,y) tuple. Any uncertainty drops evidence.
     """
     if read_details is None:
-        from hiro.vision.exam_card_details import read_exam_hand_details
+        from hiro.vision.exam_card_details import read_exam_hand_details, is_exam_card_list
         read_details = read_exam_hand_details
+        if read_layout is None:
+            read_layout = lambda image: read_exam_hand_details(image, include_detail=False)
+        if is_active is None:
+            is_active = is_exam_card_list
+    # Injected readers retain their original behavior unless fast paths are
+    # explicitly supplied, so test doubles need not implement extra APIs.
+    read_layout = read_layout or read_details
+    is_active = is_active or (lambda image: read_details(image).get("active", False))
     if find_button is None:
         from hiro.vision.deck import find_deck_button
         find_button = find_deck_button
@@ -63,7 +72,7 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
         for _ in range(max_polls):
             sleep(poll_gap)
             image = shoot()
-            reading = read_details(image)
+            reading = read_layout(image)
             if reading.get("active"):
                 return reading
         return None
@@ -93,7 +102,12 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                 continue
             # Never reuse a center from the previous selected-card image.
             image = shoot()
-            current = read_details(image)
+            current = read_layout(image)
+            if any(not c.get("card_id") or type(c.get("upgrade")) is not int
+                   for c in current.get("cards", [])):
+                # Full selected-detail recovery may identify an ambiguous art
+                # cell. Use the SAME fresh screenshot, never a previous frame.
+                current = read_details(image)
             cells = current.get("cards", [])
             if not current.get("active") or not current.get("layout_complete") or current.get("hand_count") != len(hand):
                 raise ValueError("hand_layout_changed")
@@ -135,7 +149,7 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
             try:
                 image = shoot()
                 # No fixed close coordinate, escape, or secondary close attempt.
-                if read_details(image).get("active"):
+                if is_active(image):
                     buttons = close_buttons(image)
                     if len(buttons) == 1:
                         click(tuple(buttons[0]))
@@ -144,7 +158,7 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                 for _ in range(max_polls):
                     sleep(poll_gap)
                     image = shoot()
-                    if not read_details(image).get("active") and same_state(image):
+                    if not is_active(image) and same_state(image):
                         restored = True
                         break
                 if not restored:

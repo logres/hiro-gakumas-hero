@@ -3,6 +3,7 @@
 弹窗类中断记为 recover:dialog。决策点的完整记录在策略钩子（hiro.produce.hif）与考试循环（hiro.exec.exam）里。"""
 
 import time
+import os
 
 def _cx(rect) -> float:
     return rect.center.x if hasattr(rect, "center") else rect[0] + rect[2] / 2
@@ -90,6 +91,13 @@ class HiroController(ProduceController):
     session: Session | None = None
     _landscape = None  # LandscapeGuard，首次 _update 时创建  # 由 run_hif 注入（KAA 在 produce.py 里用类名实例化，拿不到实例参数）
 
+    def _before_quick_page(self, img) -> bool:
+        """Resume a recognized result before generic quick-page handling."""
+        if os.environ.get("HIRO_EXPLICIT_IDOL_STATE") != "1":
+            return False
+        handler = getattr(self.strategy, "resume_qualify_result", None)
+        return bool(handler and handler(img))
+
     def _rearm_exam(self, scene) -> None:
         """再挑戦后画面从结果页直接回到同一场考试，KAA 记的上一页还是 EXAM，_dispatch 只在「上一页不是 EXAM」时才进
         on_exam_entered → 主循环一直判页什么都不做（第十八局本战 R2 两次再挑戦后各卡 18 / 7 分钟）。
@@ -124,6 +132,8 @@ class HiroController(ProduceController):
                 HiroController.session.guard.touch()
             self._live_tick(img)
             time.sleep(1.0)
+            return
+        if self._before_quick_page(img):
             return
         quick = self._quick_page()
         if quick == "handled":

@@ -253,6 +253,25 @@ def _dialog(img: MatLike) -> bool:
     return False
 
 
+
+def _change_candidate_panel(img: MatLike, hsv: np.ndarray) -> bool:
+    """Three card columns plus continuous dialog side rails exclude a message bubble.
+
+    A selected change dialog has blank white space below its cards. Its detail
+    text/card art interrupts PANEL_Y's full-width white rows, so that blank space
+    previously looked like a tappable message. Check independent candidate layout
+    evidence only in the bubble branch; leave classification to the normal path.
+    """
+    from hiro.vision.deck import _marks, _change1_row, CHANGE1_MARKS
+
+    white = (hsv[:, :, 1] <= 25) & (hsv[:, :, 2] >= 235)
+    if not all(float(white[650:940, a:b].mean()) >= .9 for a,b in ((60,75),(645,660))):
+        return False
+    marks = _change1_row(_marks(img, CHANGE1_MARKS))
+    return (len(marks) == 3 and all(abs(x - expected) <= 20 and 920 <= y <= 980
+            for (x,y),expected in zip(marks,(213,352,491))))
+
+
 def quick_page(img: MatLike) -> dict | None:
     """→ {page, tap, dispatch, fields, ms} 或 None（见模块说明）。"""
     from hiro.vision.pitem_select import is_select_pitem
@@ -352,6 +371,8 @@ def quick_page(img: MatLike) -> dict | None:
             return done("GIFT", tap=tuple(bag), fields={"bag": bag})
     runs = _runs(white, *BUBBLE_Y, 40)
     if runs and not _runs(white, *PANEL_Y, 40) and _hit(gray, "quick_hud_label"):  # 剧情对话框 / 事件过场 / 主页菜单下方也有白块
+        if _change_candidate_panel(img, hsv):
+            return None  # A card decision is pending; never advance its blank footer.
         # 有字的行白色占比不到 0.85：从白色段往上扩到占比 < 0.5，才是气泡上沿（第一行字在上面）
         x1, x2 = WHITE_X
         frac = ((hsv[:, x1:x2, 2] >= 235) & (hsv[:, x1:x2, 1] <= 25)).mean(axis=1)

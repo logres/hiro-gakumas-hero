@@ -12,6 +12,7 @@
 """
 
 
+import json
 import os
 import time
 from contextlib import contextmanager
@@ -1094,13 +1095,26 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
                     pixel_sha256=image_sha256(image), diagnostics=diagnostics, differences=differences,
                     baseline_sha256=image_sha256(frame.img))
         return current == facts
+    pile_snapshot = None
+    pile_image = None
+    def record_visible_groups(image):
+        nonlocal pile_snapshot, pile_image
+        from hiro.vision.exam_pile_snapshot import read_exam_visible_groups
+        try:
+            candidate = read_exam_visible_groups(image)
+            if candidate.get("active") and candidate.get("groups"):
+                pile_snapshot, pile_image = candidate, image.copy()
+        except Exception as exc:
+            rec.log("exam_pile_snapshot_unavailable", reason=type(exc).__name__)
+    pile_options = ({"on_opened": record_visible_groups}
+                    if os.environ.get("HIRO_EXAM_PILE_SNAPSHOT") == "1" else {})
     result = review_exam_hand_details(
         frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,
         same_state=same_state,
         on_detail=record_detail,
         on_rejected_detail=lambda image, data: rec.log(
             "exam_card_detail_rejected", image=image, lossless=True,
-            pixel_sha256=image_sha256(image), **data))
+            pixel_sha256=image_sha256(image), **data), **pile_options)
     rec.log("exam_card_detail_review", image=result.image, restored=result.restored,
             evidence=result.evidence, problems=result.problems)
     if result.problems == ["initial_state_unverified"]:
@@ -1108,6 +1122,11 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
     if not result.restored:
         from hiro.loop.resume import ResumeBlocked
         raise ResumeBlocked("Card detail inspection did not restore the original exam; no battle input sent")
+    if pile_snapshot is not None:
+        pile_snapshot = {**pile_snapshot, "exam_snapshot_sha256": image_sha256(frame.img),
+                         "restoration_verified": True}
+        rec.log("exam_pile_snapshot", image=pile_image, lossless=True, snapshot=pile_snapshot)
+        state.public_info = (state.public_info or "") + "\n本帧考试分组快照：" + json.dumps(pile_snapshot, ensure_ascii=False)
     # Model latency occurs only after the list is closed and the exam is restored.
     for evidence in result.evidence:
         crop = detail_images.get(evidence["slot"])

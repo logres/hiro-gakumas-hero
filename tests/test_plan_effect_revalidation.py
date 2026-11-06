@@ -123,3 +123,23 @@ def test_committed_plan_slices_private_basis_without_exposing_it(monkeypatch):
     brain.commit(current,mem,decision)
     assert len(mem.plan) == 1 and evidence.KEY in mem.plan[0]
     assert mem.expected_hand == ["B"]
+
+
+
+def test_verified_exam_groups_replan_on_new_draw_facts_not_frame_or_hand_removal():
+    def observed(*,cards=("a","a"),framehash="a",verified=True,hand_count=3):
+        current=state()
+        current.public_info += "\n本帧考试分组快照："+json.dumps({"scope":"current_exam_groups",
+            "restoration_verified":verified,"snapshot_sha256":framehash,
+            "groups":[{"pile":"hand","count":hand_count,"complete":False},
+                      {"pile":"draw","count":len(cards),"complete":True,
+                       "cards":[{"card_id":c,"observed_thumbnail_upgrade":0,"rect":[1,2,3,4]} for c in cards]}]})
+        return current
+    old=evidence.stamp([{"action":"play","card":"A"}],state())
+    assert evidence.changed(old,observed())
+    plan=evidence.stamp([{"action":"play","card":"A"}],observed())
+    assert not evidence.changed(plan,observed(framehash="new",hand_count=2))
+    assert evidence.changed(plan,observed(cards=("a",)))
+    assert evidence.changed(plan,observed(cards=("a","b")))
+    assert not evidence.changed(old,observed(verified=False))
+    assert not evidence.changed(plan,state())  # Missing observation is not an empty draw pile.

@@ -13,7 +13,7 @@ class Image:
 
 
 def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False,
-        fast_calls=None, unresolved_layout=False, on_rejected_detail=None):
+        fast_calls=None, unresolved_layout=False, on_rejected_detail=None, on_opened=None):
     current = Image("exam")
     taps = []
     hand = [SimpleNamespace(slot=0, card_id="a", upgrade=1),
@@ -60,7 +60,7 @@ def run(*, missing_close=False, changed=False, mismatch=False, duplicate=False,
         sleep=lambda _: None, same_state=lambda im: im.name == "exam",
         read_details=read, find_button=lambda _: (1, 1),
         close_buttons=lambda _: [] if missing_close else [(9, 9)], max_polls=2,
-        on_rejected_detail=on_rejected_detail, **fast)
+        on_rejected_detail=on_rejected_detail, on_opened=on_opened, **fast)
     return result, taps, initial
 
 
@@ -281,3 +281,11 @@ def test_rejected_diagnostic_failure_does_not_change_closing():
     result, taps, _ = run(mismatch=True, on_rejected_detail=broken)
     assert result.restored and not result.evidence
     assert taps[-1] == (9,9)
+
+
+@pytest.mark.synthetic
+def test_opened_observer_reads_verified_modal_once_without_extra_taps():
+    observed=[]
+    result,taps,_=run(on_opened=lambda image:observed.append(image.name))
+    assert result.restored and observed==["modal"]
+    assert taps==[(1,1),(20,20),(10,10),(9,9)]

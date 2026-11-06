@@ -38,7 +38,7 @@ def _identity(card):
 def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
                              same_state, read_details=None, find_button=None,
                              close_buttons=None, on_detail=None, read_layout=None,
-                             is_active=None, on_rejected_detail=None,
+                             is_active=None, on_rejected_detail=None, on_opened=None,
                              max_polls=8, poll_gap=0.2):
     """Inspect unambiguous identities, close once, verify full decision state.
 
@@ -92,6 +92,8 @@ def review_exam_hand_details(initial_image, hand, *, shoot, click, sleep,
             raise ValueError("detail_open_timeout")
         if not reading.get("layout_complete") or reading.get("hand_count") != len(hand):
             raise ValueError("hand_layout_incomplete")
+        if on_opened is not None:
+            on_opened(image)
         # Duplicate physical copies cannot be bound to a particular hand slot.
         keys = [_identity(c) for c in hand]
         slots = [_get(c, "slot") for c in hand]

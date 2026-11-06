@@ -4,7 +4,7 @@ import json
 import os
 
 KEY = "_effect_basis"
-PREFIXES = ("已验证主数据与本帧装备识别：", "本帧卡牌详情原始证据：")
+PREFIXES = ("已验证主数据与本帧装备识别：", "本帧卡牌详情原始证据：", "本帧考试分组快照：")
 
 
 def enabled():
@@ -32,7 +32,7 @@ def effect_basis(state):
     observations for a remaining card do. Normal removal never invalidates.
     """
     remaining = {_version(c.card_id, c.upgrade) for c in state.hand}
-    cards, equipment = {}, []
+    cards, equipment, groups = {}, [], {}
     for line in (state.public_info or "").splitlines():
         prefix = next((p for p in PREFIXES if line.startswith(p)), None)
         if prefix is None:
@@ -57,6 +57,21 @@ def effect_basis(state):
                 if isinstance(vision, dict) and vision.get("status") == "model_transcription_unverified":
                     value["vision_transcription"] = {k: vision.get(k) for k in ("status", "lines", "uncertain_spans")}
                 cards[key] = value
+        elif prefix == PREFIXES[2]:
+            if data.get("scope") != "current_exam_groups" or data.get("restoration_verified") is not True:
+                continue
+            for group in data.get("groups") or []:
+                if not isinstance(group, dict) or group.get("pile") not in ("draw", "grave", "excluded"):
+                    continue
+                count = group.get("count")
+                if type(count) is not int or count < 0:
+                    continue
+                value = {"count": count, "complete": group.get("complete") is True}
+                if value["complete"]:
+                    value["cards"] = sorted([{k: c.get(k) for k in ("card_id", "observed_thumbnail_upgrade", "customized")}
+                                             for c in group.get("cards") or [] if isinstance(c, dict)],
+                                            key=lambda c: json.dumps(c, sort_keys=True))
+                groups[group["pile"]] = value
         else:
             for item in data.get("observed_pitems") or []:
                 if not isinstance(item, dict):
@@ -70,7 +85,7 @@ def effect_basis(state):
                          for c in candidates if isinstance(c, dict)], key=lambda c: json.dumps(c, sort_keys=True))
                 if value:
                     equipment.append(value)
-    return {"version": 1, "cards": cards,
+    return {"version": 1, "cards": cards, "exam_groups": groups,
             "equipment": sorted(equipment, key=lambda v: json.dumps(v, sort_keys=True))}
 
 
@@ -78,10 +93,11 @@ def changed(plan, state):
     current = effect_basis(state)
     old = plan[0].get(KEY) if plan and isinstance(plan[0], dict) else None
     if not isinstance(old, dict) or old.get("version") != 1:
-        return bool(current["cards"] or current["equipment"])
+        return bool(current["cards"] or current["equipment"] or current["exam_groups"])
     previous_cards = old.get("cards") or {}
     return (any(previous_cards.get(key) != value for key, value in current["cards"].items())
-            or bool(current["equipment"] and current["equipment"] != old.get("equipment")))
+            or bool(current["equipment"] and current["equipment"] != old.get("equipment"))
+            or any((old.get("exam_groups") or {}).get(key) != value for key,value in current["exam_groups"].items()))
 
 
 def stamp(plan, state):

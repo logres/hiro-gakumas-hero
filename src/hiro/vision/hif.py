@@ -894,10 +894,15 @@ def read_extra_turns(img: MatLike) -> int | None:
     _, labels, stats, _ = cv2.connectedComponentsWithStats(blue)
     # Bright scenery can join the pill's white component and leave tiny blue
     # fragments on its bounding edge. Actual +N glyphs are interior (about
-    # 14–19px tall); keep every interior fragment, including unreadable ones.
+    # 14–19px tall). A narrow left-edge scenery sliver is outside the +N
+    # text: the verified plus begins well inside the capsule. Keep every
+    # interior fragment, including unreadable ones; never crop a glyph.
+    windows_edge = os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
     components = sorted((s[0], i, s) for i, s in enumerate(stats[1:], 1)
                         if s[4] >= 10 and not
-                        (s[4] <= 20 and s[3] < 10 and (s[0] == 0 or s[0] + s[2] == w)))
+                        ((s[4] <= 20 and s[3] < 10 and (s[0] == 0 or s[0] + s[2] == w))
+                         or (windows_edge and ((x == 0 and s[0] == 0 and s[2] <= 6 and s[3] <= 16 and s[4] <= 60)
+                                               or (s[0] + s[2] == w and s[3] <= 3 and s[2] >= 16)))))
     templates = _templates()
     digits = []
     for index, (_, label, s) in enumerate(components):

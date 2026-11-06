@@ -23,6 +23,7 @@ def read_synthetic(monkeypatch, scores, entries):
 
     monkeypatch.setattr(status, "diamond_score", score)
     monkeypatch.setattr(status, "_read_slot", read_slot)
+    monkeypatch.setattr(status, "_trailing_enchant", lambda *_: None)
     rows = status.read_status_column(np.zeros((1280, 720, 3), dtype=np.uint8))
     assert inspected == list(range(status.MAX_SLOTS))
     return rows, read
@@ -143,3 +144,85 @@ def test_local_r15_seq53_reads_visible_motivation_25(monkeypatch):
     assert rows[1]["uncertain"] == "slot_outline"
     assert observed(rows)["motivation"] == 25
     assert observed(rows)["impression"] == 161
+
+
+@pytest.mark.parametrize("text,confidence,padded,expected", [
+    ("10", .99, 10, 10), ("10", .99, 1, None), ("1p", .99, 1, None),
+    ("10", .8, 10, None)])
+def test_status_numeric_recovery_requires_independent_complete_number(monkeypatch, text, confidence, padded, expected):
+    monkeypatch.setattr(status, "ocr", lambda img, **kw: [(text,confidence)])
+    boxes = []
+    monkeypatch.setattr(status, "read_dddd", lambda img,box: boxes.append(box) or padded)
+    image = np.zeros((1280,720,3), np.uint8)
+    assert status._verified_status_number(image,3) == expected
+    if boxes:
+        cy = status._slot_y(3)
+        assert boxes == [(status.SLOT_X+10,cy,status.SLOT_X+62,cy+34)]
+
+
+def test_failed_font_status_uses_verified_number_instead_of_tight_crop_guess(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    monkeypatch.setattr(status,"read_leading_int",lambda *args:(None,None))
+    monkeypatch.setattr(status,"_verified_status_number",lambda *_:10)
+    monkeypatch.setattr(status,"_unit_label",lambda *_:None)
+    assert status._value(np.zeros((1280,720,3),np.uint8),3,"status") == (10,None)
+
+
+@pytest.mark.parametrize("score,value,unit,accepted", [
+    (.82,2,"ターン",True), (.79,2,"ターン",False),
+    (.82,None,"ターン",False), (.82,2,None,False), (.82,0,"回",False)])
+def test_trailing_slot_needs_high_card_match_and_explicit_positive_duration(monkeypatch,score,value,unit,accepted):
+    from types import SimpleNamespace
+    monkeypatch.setattr(status,"match_enchant_card",lambda *_:(score,"art"))
+    monkeypatch.setattr(status,"_card_from_asset",lambda _:SimpleNamespace(_id="card",name="effect"))
+    monkeypatch.setattr(status,"_value",lambda *_:(value,unit))
+    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[(f"{value}{unit}",.99)] if unit else [])
+    entry=status._trailing_enchant(np.zeros((1280,720,3),np.uint8),7)
+    assert bool(entry) is accepted
+    if accepted:
+        assert entry["value"]==2 and entry["occupancy_basis"]=="card_art_and_duration"
+
+
+def test_trailing_recovery_stops_at_first_background_without_skipping(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    monkeypatch.setattr(status,"diamond_score",lambda img,k:1. if k==0 else .2)
+    monkeypatch.setattr(status,"_read_slot",lambda img,k:{"slot":k,"kind":"status","key":"examreview","value":10})
+    inspected=[]
+    def trailing(img,k):
+        inspected.append(k)
+        return {"slot":k,"kind":"enchant","name":"known","value":2,"unit":"ターン"} if k==1 else None
+    monkeypatch.setattr(status,"_trailing_enchant",trailing)
+    rows=status.read_status_column(np.zeros((1280,720,3),np.uint8))
+    assert [row["slot"] for row in rows]==[0,1] and inspected==[1,2]
+
+
+def test_local_r24_lossless_recovers_visible_10_and_final_duration(monkeypatch):
+    path=Path(__file__).resolve().parents[1]/"reports/runs/20261107-071534/frames/00008-exam_card_detail_state_changed.png"
+    if not path.exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    rows=status.read_status_column(cv2.imread(str(path)),cache=None)
+    assert observed(rows)["motivation"]==10
+    assert observed(rows)["impression"]==109
+    last=rows[-1]
+    assert last["name"]=="夢色リップ" and last["value"]==2 and last["unit"]=="ターン"
+    assert last["occupancy_basis"]=="card_art_and_duration"
+    assert len(rows)==8
+
+
+def test_native_status_flag_off_keeps_legacy_numeric_fallback(monkeypatch):
+    monkeypatch.delenv("HIRO_WINDOWS_HUD_NATIVE_SCALE",raising=False)
+    monkeypatch.setattr(status,"read_leading_int",lambda *args:(None,None))
+    monkeypatch.setattr(status,"read_dddd",lambda *_:1)
+    monkeypatch.setattr(status,"_unit_label",lambda *_:None)
+    monkeypatch.setattr(status,"_verified_status_number",lambda *_:pytest.fail("flag off"))
+    assert status._value(np.zeros((1280,720,3),np.uint8),3,"status")== (1,None)
+
+
+def test_native_status_flag_off_does_not_extend_column(monkeypatch):
+    monkeypatch.delenv("HIRO_WINDOWS_HUD_NATIVE_SCALE",raising=False)
+    monkeypatch.setattr(status,"diamond_score",lambda img,k:1. if k==0 else .2)
+    monkeypatch.setattr(status,"_read_slot",lambda img,k:{"slot":k,"kind":"status","key":"examreview","value":10})
+    monkeypatch.setattr(status,"_trailing_enchant",lambda *_:pytest.fail("flag off"))
+    assert len(status.read_status_column(np.zeros((1280,720,3),np.uint8)))==1

@@ -11,6 +11,7 @@
 """
 
 import json
+import os
 import re
 from functools import lru_cache
 
@@ -200,6 +201,29 @@ def _unit_label(img: MatLike, k: int) -> str | None:
     return next((u for u in UNITS if u in label), None)
 
 
+def _verified_status_number(img: MatLike, k: int) -> int | None:
+    """Recover a failed font read with independent engine and crop agreement.
+
+    Bright scenery can invalidate the dark ring around an otherwise clear 0.
+    Upsampling a tight crop can then make ddddocr lose that digit. Native OCR
+    must read one complete number, agreeing with ddddocr on a padded crop.
+    """
+    cy = _slot_y(k)
+    x1, y1, x2, y2 = SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32
+    padded = read_dddd(img, (x1 - 2, y1 - 2, x2 + 2, y2 + 2))
+    if padded is None:
+        return None
+    for crop in (img[y1:y2, x1:x2], img[cy - 2:cy + 34, SLOT_X + 14:SLOT_X + 130]):
+        lines = ocr(crop, scale=1.0)
+        if len(lines) != 1:
+            continue
+        text, confidence = lines[0]
+        match = re.fullmatch(r"([0-9]+)[%％]?", text.strip())
+        if confidence >= 0.9 and match is not None and int(match[1]) == padded:
+            return padded
+    return None
+
+
 def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple[int | None, str | None]:
     """数值用游戏字体比对，「%」由紧跟数字的小圈认出；卡牌效果槽的「ターン / 回」按卡缓存，首次用 Apple Vision 读。
     字体比对没把握时（数字被特效遮住、状态槽数字后跟着认不出的字）退回 ddddocr + Apple Vision。"""
@@ -220,10 +244,36 @@ def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple
             _ENCHANT_UNIT[card_id] = unit
         return value, _ENCHANT_UNIT[card_id]
     # 慢路径：与原实现相同
-    value = read_dddd(img, (SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32))
+    value = (_verified_status_number(img, k) if kind == "status" and os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" else
+             read_dddd(img, (SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32)))
     if value is None:
         return None, None
     return value, _unit_label(img, k)
+
+
+def _trailing_enchant(img: MatLike, k: int) -> dict | None:
+    """Confirm one adjoining low-outline slot by card art AND duration text."""
+    score, asset = match_enchant_card(img, k)
+    if score < max(0.8, ENCHANT_MIN_SCORE):
+        return None
+    card = _card_from_asset(asset)
+    if card is None:
+        return None
+    value, _ = _value(img, k, "enchant", card._id)
+    cy = _slot_y(k)
+    # Keep the whole diamond as OCR context: tight label crops can split
+    # ターン into unrelated fragments against the moving stage backdrop.
+    lines = ocr(img[cy - 35:cy + 55, max(0, SLOT_X - 45):SLOT_X + 155], scale=1.0)
+    durations = {(int(match[1]), match[2]) for text, confidence in lines
+                 if confidence >= 0.9 and (match := re.fullmatch(r"([0-9]+)(ターン|回)", text.strip()))}
+    if len(durations) != 1:
+        return None
+    observed_value, unit = next(iter(durations))
+    if type(value) is not int or value <= 0 or value != observed_value:
+        return None
+    return {"slot": k, "kind": "enchant", "card_id": card._id, "name": card.name,
+            "asset": asset, "score": round(score, 3), "value": value, "unit": unit,
+            "occupancy_basis": "card_art_and_duration"}
 
 
 def read_status_column(img: MatLike, *, cache: RegionCache | None = None) -> list[dict]:
@@ -246,6 +296,14 @@ def read_status_column(img: MatLike, *, cache: RegionCache | None = None) -> lis
         cy = _slot_y(k)
         region = img[cy - SLOT_HALF - 4 : cy + 36, SLOT_X - SLOT_HALF - 4 : SLOT_X + 130]
         out.append(cached(cache, f"status{k}", region, lambda k=k: _read_slot(img, k)))
+    # A bright backdrop can erase the final diamond outline. Inspect only the
+    # contiguous next slot; no identity or duration means stop immediately.
+    if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+        for k in range(occupied[-1] + 1, MAX_SLOTS):
+            entry = _trailing_enchant(img, k)
+            if entry is None:
+                break
+            out.append(entry)
     return out
 
 

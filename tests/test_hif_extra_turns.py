@@ -108,3 +108,46 @@ def test_recorded_scenery_beside_extra_turn_capsule():
         assert hif.read_extra_turns(img) == 1
         assert hif.read_remaining_turns(img) == 3
 
+
+
+@pytest.mark.synthetic
+def test_left_capsule_edge_scenery_is_not_a_leading_glyph(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    img = capsule("1")
+    original = img.copy()
+    img[120:158, 95:155] = (255,255,255)
+    glyphs = np.any(original != 0, axis=2) & np.any(original != 255, axis=2)
+    img[glyphs] = original[glyphs]
+    cv2.fillPoly(img, [np.array([[95,137],[100,143],[95,149]])], (255,180,0))
+    assert hif.read_extra_turns(img) == 1
+    monkeypatch.delenv("HIRO_WINDOWS_HUD_NATIVE_SCALE")
+    assert hif.read_extra_turns(img) is None
+
+
+@pytest.mark.synthetic
+def test_left_fragment_beyond_capsule_margin_remains_unknown(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    img = capsule("1")
+    img[130:144, 102:108] = (255,180,0)
+    assert hif.read_extra_turns(img) is None
+
+
+@pytest.mark.synthetic
+def test_flat_right_edge_scenery_is_not_an_extra_digit(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    img = capsule("1")
+    img[120:158,95:183] = (255,255,255)
+    original = capsule("1")
+    glyphs = np.any(original != 0, axis=2) & np.any(original != 255, axis=2)
+    img[glyphs] = original[glyphs]
+    img[125:127,151:183] = (255,180,0)
+    img[128:130,152:183] = (255,180,0)
+    assert hif.read_extra_turns(img) == 1
+
+
+@pytest.mark.synthetic
+def test_flat_interior_fragment_is_not_silently_dropped(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE", "1")
+    img = capsule("1")
+    img[125:127,153:173] = (255,180,0)
+    assert hif.read_extra_turns(img) is None

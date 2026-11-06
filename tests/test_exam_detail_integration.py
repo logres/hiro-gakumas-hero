@@ -200,3 +200,40 @@ def test_state_changed_preserves_lossless_current_image_and_failed_gate(monkeypa
     assert event["pixel_sha256"] == review.image_sha256(fresh)
     assert event["baseline_sha256"] == review.image_sha256(initial)
     assert event["diagnostics"]["gate"] == "multiplier_unknown"
+
+
+@pytest.mark.synthetic
+@pytest.mark.parametrize("enabled,restored", [(False,True),(True,True),(True,False)])
+def test_visible_piles_require_opt_in_and_restored_state(monkeypatch,enabled,restored):
+    from hiro.vision import exam_pile_snapshot
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS","1")
+    monkeypatch.setenv("HIRO_EXAM_PILE_SNAPSHOT","1" if enabled else "0")
+    monkeypatch.delenv("HIRO_EXAM_CARD_DETAIL_VISION",raising=False)
+    image=np.zeros((4,4,3),np.uint8)
+    state=SimpleNamespace(hand=[],public_info="catalog",legal_actions=lambda:["play:0","skip"])
+    events=[]
+    snapshot={"active":True,"scope":"current_exam_groups","draw_order":"unknown",
+              "groups":[{"pile":"draw","count":1,"complete":True,"cards":[{"card_id":"synthetic","observed_thumbnail_upgrade":1}]}],
+              "snapshot_sha256":review.image_sha256(image)}
+    monkeypatch.setattr(exam_pile_snapshot,"read_exam_visible_groups",lambda im:snapshot)
+    def inspect(*args,**kw):
+        assert ("on_opened" in kw) is enabled
+        if enabled:kw["on_opened"](image)
+        return review.ReviewResult([],image,[],restored)
+    monkeypatch.setattr(review,"review_exam_hand_details",inspect)
+    monkeypatch.setattr(exam,"_detail_state_facts",lambda img,**kw:{"hp":32})
+    monkeypatch.setattr(exam,"device",SimpleNamespace(screenshot=lambda:image,click=lambda p:pytest.fail("no clicks")))
+    rec=SimpleNamespace(log=lambda kind,**kw:events.append((kind,kw)))
+    if not restored:
+        with pytest.raises(ResumeBlocked):exam._review_current_card_details(state,SimpleNamespace(img=image),rec)
+    else:
+        assert exam._review_current_card_details(state,SimpleNamespace(img=image),rec)
+    if enabled and restored:
+        assert '"scope": "current_exam_groups"' in state.public_info
+        event=next(kw for kind,kw in events if kind=="exam_pile_snapshot")
+        assert event["lossless"] is True
+        assert event["snapshot"]["exam_snapshot_sha256"]==review.image_sha256(image)
+        assert event["snapshot"]["restoration_verified"] is True
+    else:
+        assert state.public_info=="catalog"
+        assert not any(kind=="exam_pile_snapshot" for kind,_ in events)

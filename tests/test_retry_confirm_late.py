@@ -15,7 +15,7 @@ DIALOG = [b("再挑戦確認", 420), b("再挑戦チケットを消費して、�
           b("✕キャンセル", 1160), b("決定", 1160)]  # fmt: skip
 
 
-def test_late_confirm_dialog_is_pressed(monkeypatch):
+def test_late_confirm_dialog_is_pressed(monkeypatch, tmp_path):
     clock = {"t": 0.0}
     calls = {"n": 0}
     clicks = []
@@ -23,7 +23,7 @@ def test_late_confirm_dialog_is_pressed(monkeypatch):
     def ocr_():
         calls["n"] += 1
         if clicks and len(clicks) >= 2:
-            return [b("敗退", 300)]  # 点了「決定」后确认框关闭（执行 b672e72 会核对确认框关没关）
+            return [b("試験開始", 300)]  # 确认关闭后进入考试准备页
         return DIALOG if clock["t"] >= 8.0 else [b("敗退", 300)]  # 8 秒后才弹
 
     monkeypatch.setattr(hif, "ocr", NS(ocr=ocr_))
@@ -32,7 +32,7 @@ def test_late_confirm_dialog_is_pressed(monkeypatch):
     monkeypatch.setattr(hif.time, "monotonic", lambda: clock["t"])
     st = HiroHifStrategy.__new__(HiroHifStrategy)
     st._retries_so_far = lambda label: 0
-    st.s = NS(note=lambda *a: None)
+    st.s = NS(note=lambda *a: None, trace=NS(dir=tmp_path / "run"))
     kind = st._click_retry("r2", b("再挑戦", 1160), [b("再挑戦", 1160), b("本日あと1回無料", 940)])
     assert kind == "free"
     assert len(clicks) == 2 and clicks[1].center.y == 1160  # 第 2 下点的是确认框「決定」

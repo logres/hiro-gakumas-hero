@@ -1448,6 +1448,25 @@ class HiroHifStrategy(HifGrindStrategy):
 
     MAX_RETRIES_PER_EXAM = 3  # 同一场考试最多再挑戦几次（含续跑前的段）：打法 / 引擎没改时重复挑戦只花时间
 
+    def _retry_budget_path(self) -> Path:
+        import re
+        cur = Path(self.s.trace.dir)
+        return cur.parent / re.sub(r"-r\d+$", "", cur.name) / "retry-budget.jsonl"
+
+    def _reserve_retry(self, label: str, used: int) -> None:
+        """Persist a conservative attempt before input, even if input later fails."""
+        import json
+        import os
+        import uuid
+        path = self._retry_budget_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        event = {"event": "retry_reserved", "label": label, "used": used + 1,
+                 "attempt_id": uuid.uuid4().hex, "time": time.time()}
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     def _retries_so_far(self, label: str) -> int:
         """本局（同一 trace 基名的各段）已对 label 用过几次再挑戦：数 trace 里的「使用再挑戦」说明。"""
         import json as _json
@@ -1461,12 +1480,28 @@ class HiroHifStrategy(HifGrindStrategy):
             if not f.exists() or not re.fullmatch(re.escape(base) + r"(-r\d+)?", d.name):
                 continue
             for line in f.open(encoding="utf-8"):
-                if "使用再挑戦" in line:
+                if "使用再挑戦" in line or "\\u" in line:
                     try:
                         n += sum(1 for x in _json.loads(line).get("notes") or [] if "使用再挑戦" in x and (label in x or "本战" in x))
                     except ValueError:
                         pass
-        return n
+        path = self._retry_budget_path()
+        floor = 0
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    event = _json.loads(line)
+                    if event.get("event") not in ("retry_reserved", "retry_budget_floor"):
+                        raise ValueError("Unknown retry budget event")
+                    used = event["used"]
+                    if not isinstance(used, int) or isinstance(used, bool) or used < 0:
+                        raise ValueError("Invalid retry budget count")
+                    if event["label"] == label:
+                        floor = max(floor, used)
+                except (ValueError, KeyError, TypeError):
+                    logger.error("再挑戦预算记录损坏，停止自动再挑戦：%s", path)
+                    return self.MAX_RETRIES_PER_EXAM
+        return max(n, floor)  # notes describe the same reservations; never add them twice
 
     def _click_retry(self, label: str, btn, texts) -> str | None:
         """点「再挑戦」并处理确认框（用户 2026-11-01 授权：免费 / 再挑戦券随便用，消耗ジュエル的绝不点）。
@@ -1477,11 +1512,13 @@ class HiroHifStrategy(HifGrindStrategy):
             logger.warning("%s 已再挑戦 %d 次（上限 %d），不再挑戦", label, used, self.MAX_RETRIES_PER_EXAM)
             return None
         free_hint = any("無料" in t.text for t in texts)
+        self._reserve_retry(label, used)
         device.click(btn.rect)
         # 确认框可能晚弹（第二十局 04:06 日期切换后：6 秒窗口过了才弹，没点「決定」就当成已再挑戦，主循环 UNKNOWN 60 秒）
         end = time.monotonic() + self.RETRY_CONFIRM_WAIT
         kind = "free" if free_hint else None
         clicks, last, tickets = 0, -1e9, None
+        confirmed_closed = False
         while time.monotonic() < end:
             sleep(0.8)
             device.screenshot()
@@ -1503,9 +1540,12 @@ class HiroHifStrategy(HifGrindStrategy):
                 kind = "ticket"
             hit = next((t for t in boxes if any(button_text(t.text, w) for w in self.RETRY_CONFIRM) and t.rect.center.y > 600), None)
             if hit is None:
-                if clicks:
-                    break  # 点过确认、确认框已经关了
+                if clicks and "再挑戦" not in words and "敗退" not in words:
+                    confirmed_closed = True
+                    break  # 点过确认、确认框已关闭，且不是原敗退页
                 continue
+            if not any(w in words for w in ("再挑戦", "所持")):
+                continue  # unrelated confirmation is not a retry confirmation
             # 第二十五局 R2：确认框淡入时点了「決定」没响应，以前点一下就当完成，确认框挂 46s。还在就隔一会儿再点（最多 3 次）
             if clicks >= self.RETRY_CONFIRM_TAPS or time.monotonic() - last < 1.5:
                 continue
@@ -1513,7 +1553,10 @@ class HiroHifStrategy(HifGrindStrategy):
             clicks, last = clicks + 1, time.monotonic()
             if clicks > 1:
                 logger.info("%s 再挑戦确认框点了「%s」还在，再点一次（第 %d 次）", label, hit.text.strip(), clicks)
-        kind = kind or "free"
+        if not confirmed_closed or kind is None:
+            self.s.note(f"{label} 再挑戦结果未确认，已保守计入预算，不报告免费或成功")
+            logger.warning("%s 再挑戦结果未确认（确认点击 %d 次），已占预算，不报告成功", label, clicks)
+            return None
         HiroHifStrategy.retries_used[kind] = HiroHifStrategy.retries_used.get(kind, 0) + 1
         # 记账（协调 2026-11-04）：这一次用的是免费还是券、券还剩几张，写进日志和 trace（复盘报告读 note）
         what = {"free": "免费", "ticket": "再挑戦チケット"}[kind]

@@ -146,7 +146,7 @@ def test_consult_opens_dialog_when_deck_unknown():
     assert st._consult_open_dialog(end, {"upgrade", "delete"}).action.kind is ActionKind.SHOP_END
 
 
-def test_retry_cancels_when_jewel(monkeypatch):
+def test_retry_cancels_when_jewel(monkeypatch, tmp_path):
     """再挑戦确认框出现ジュエル：点キャンセル，返回 None；出现券：确认，记 ticket。"""
     import hiro.produce.hif as hif
 
@@ -160,6 +160,8 @@ def test_retry_cancels_when_jewel(monkeypatch):
     monkeypatch.setattr(hif, "sleep", lambda s: None)
     st = _strategy()
     st._retries_so_far = lambda label: 0
+    from types import SimpleNamespace as NS
+    st.s.trace = NS(dir=tmp_path / "run")
     monkeypatch.setattr(hif, "ocr", type("O", (), {"ocr": staticmethod(lambda *a, **k: [T("ジュエルを消費して再挑戦"), T("キャンセル")])}))
     assert st._click_retry("r2", T("再挑戦"), []) is None
     n0 = len(clicks)  # 确认框在第一次点确认后关掉（点过确认、确认框没了才算完成）
@@ -168,7 +170,7 @@ def test_retry_cancels_when_jewel(monkeypatch):
     assert st._click_retry("r2", T("再挑戦"), []) == "ticket"
 
 
-def test_retry_confirm_reclicks_until_closed(monkeypatch):
+def test_retry_confirm_reclicks_until_closed(monkeypatch, tmp_path):
     """第二十五局 R2：确认框淡入时点了「決定」没响应，以前点一下就当完成、确认框挂 46s。现在确认框还在就隔 1.5s 再点，
     关了才返回；按钮读成「く決定」也认。"""
     import hiro.produce.hif as hif
@@ -183,11 +185,13 @@ def test_retry_confirm_reclicks_until_closed(monkeypatch):
     monkeypatch.setattr(hif, "device", type("D", (), {"click": staticmethod(lambda *a: clicks.append(a)), "screenshot": staticmethod(lambda: None)}))
     monkeypatch.setattr(hif, "sleep", lambda s: t.__setitem__("now", t["now"] + s))
     monkeypatch.setattr(hif.time, "monotonic", lambda: t["now"])
-    dialog = [T("再挑戦確認", 400), T("再挑戦チケットを消費して、試験に再挑戦しますか？", 650), T("メキャンセル"), T("く決定")]
+    dialog = [T("再挑戦確認", 400), T("再挑戦チケットを消費して、試験に再挑戦しますか？", 650), T("本日あと1回無料", 940), T("メキャンセル"), T("く決定")]
     # 第 1 次点「決定」没响应（淡入中），第 2 次才关
     monkeypatch.setattr(hif, "ocr", type("O", (), {"ocr": staticmethod(lambda *a, **k: dialog if len(clicks) < 3 else [])}))
     st = _strategy()
     st._retries_so_far = lambda label: 0
+    from types import SimpleNamespace as NS
+    st.s.trace = NS(dir=tmp_path / "run")
     assert st._click_retry("r2", T("再挑戦", 1000), []) in ("free", "ticket")
     assert len(clicks) == 3 and t["now"] < hif.HiroHifStrategy.RETRY_CONFIRM_WAIT  # 再挑戦 + 決定 ×2，没等满 15s
 
@@ -217,7 +221,7 @@ def test_retry_cost_from_owned_tickets():
     assert retry_tickets(used) == (260, 259)
 
 
-def test_retry_records_ticket_use_and_left(monkeypatch):
+def test_retry_records_ticket_use_and_left(monkeypatch, tmp_path):
     """记账：确认框「所持 260 → 259」→ 返回 ticket，note 写明用了券、还剩 259 张。"""
     import hiro.produce.hif as hif
 
@@ -235,6 +239,8 @@ def test_retry_records_ticket_use_and_left(monkeypatch):
     monkeypatch.setattr(hif, "ocr", type("O", (), {"ocr": staticmethod(lambda *a, **k: dialog if len(clicks) < 2 else [])}))
     st = _strategy()
     st._retries_so_far = lambda label: 0
+    from types import SimpleNamespace as NS
+    st.s.trace = NS(dir=tmp_path / "run")
     notes = []
     st.s.note = notes.append
     assert st._click_retry("r2", T("再挑戦", 300, 1000), []) == "ticket"

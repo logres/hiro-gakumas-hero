@@ -126,6 +126,19 @@ STEP2_RENTAL = (483, 847)  # 第 6 格：レンタル枠（空时「レンタル
 ARROWS = {"formation": {"prev": [40, 635], "next": [680, 635]}, "step2": {"prev": [20, 833], "next": [700, 833]}}
 
 
+def step2_page(img: MatLike) -> tuple[int, int] | None:
+    """Read the fixed white N/20 counter, never the editable formation name."""
+    from hiro.vision.ocr import digits_image, ocr
+
+    crop = img[650:690, 72:135]
+    if not crop.size:
+        return None
+    pre = cv2.cvtColor(digits_image(crop), cv2.COLOR_GRAY2BGR)
+    text = "".join(t for t, _ in ocr(pre, languages=("en-US",)))
+    match = re.fullmatch(r"([1-9]|1[0-9]|20)/20", re.sub(r"\s", "", text))
+    return (int(match.group(1)), 20) if match else None
+
+
 def _texts(img: MatLike, boxes):
     if boxes is None:
         from hiro.vision.pages import _texts as t
@@ -157,8 +170,9 @@ def read_support_formation(img: MatLike, boxes=None) -> dict | None:
     name = next((t for t, _ in texts if t.startswith("サポートカード編成")), None) or next(
         (t for t, b in texts if 60 <= b[1] <= 160 and 150 <= (b[0] + b[2]) // 2 <= 570 and not re.fullmatch(r"[+\d.%]+", t)), None)
     page = next((m for t, b in texts if b[0] < 250 and (m := re.fullmatch(r"(\d+)/(\d+)", t))), None)  # 编成号在左侧；第 2 步页右上还有「親愛度 37/37」
+    fraction = step2_page(img) if view == "step2" else ((int(page.group(1)), int(page.group(2))) if page else None)
     slots = [{"slot": i, **read_tile(img, x, y)} for i, (x, y) in enumerate(tiles)]
-    out = {"view": view, "name": name, "number": int(page.group(1)) if page else None, "total": int(page.group(2)) if page else None,
+    out = {"view": view, "name": name, "number": fraction[0] if fraction else None, "total": fraction[1] if fraction else None,
            "slots": slots, "arrows": ARROWS[view],
            "buttons": {k: _center(b) for t, b in texts for k, w in (("reset", "リセット"), ("auto", "おまかせ"), ("detail", "編成詳細")) if w in t}}  # fmt: skip
     if view == "step2":

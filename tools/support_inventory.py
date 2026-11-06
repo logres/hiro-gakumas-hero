@@ -134,7 +134,12 @@ def live(n: int) -> list[dict]:
         if r is None:
             print("不在支援卡编成页，停止", flush=True)
             break
+        if r["number"] is None or r["total"] != 20:
+            out.append(r)  # Preserve recognized cards and the unknown counter in the report.
+            print("编成编号未知，扫描不完整；停止，不猜页码或继续翻页", flush=True)
+            break
         if r["number"] in seen:
+            print(f"重复编成编号 {r['number']}，停止；已读取 {len(out)} 个编成", flush=True)
             break  # 翻了一圈回到起点
         seen.add(r["number"])
         out.append(r)
@@ -164,6 +169,7 @@ def main() -> None:
     else:
         formations = offline(a.offline) if a.offline else live(a.formations)
         inv = {"generated": time.time(), "source": "formations", "note": "只含编成里出现过的卡；全量用 --list", **aggregate(formations)}
+        inv["problems"] = ["编成编号未知，扫描不完整"] if any(f.get("number") is None for f in formations) else []
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(inv, ensure_ascii=False, indent=1))
     print("wrote", a.out, len(inv["cards"]), "cards")

@@ -12,6 +12,7 @@
 每份回忆一条：{index, page, cell, timing, card{card_id, name, upgrade}, plan, customized, card_text, ability, ability_truncated,
 stats[{type, attr, value, active, truncated, text, …}], frames{p1, p2}, problems}。
 上次扫描第 2 页有 7 处词条完全一样：点完格子后详情框还没刷新就截了图。这里每一步都等画面真的变了再读（见 _wait_change）。
+HIRO_MEMORY_SCAN_VERIFIED=1：固定页码 OCR + 四角选中框 + 连续稳定帧；只扫两行完整卡格，任何过渡核实失败立即停止。
 """
 
 from __future__ import annotations
@@ -57,22 +58,88 @@ def offline(root: str) -> list[dict]:
     return out
 
 
-def _wait_change(d, prev_texts: str | None, want_page: int | None):
+class MemoryScanPending(RuntimeError):
+    """The requested cell/page was not verified; stop without further input."""
+
+
+def _wait_change(d, prev_texts: str | None, want_page: int | None, *, want_cell=None):
     """截图直到详情框文字与 prev 不同（且页码为 want_page）；超时返回最后一帧。"""
-    from hiro.vision.memory import detail_page
+    from hiro.vision.memory import detail_page, picker_detail_open, verified_selected_cell
     from hiro.vision.pages import _texts
 
-    deadline = time.monotonic() + WAIT_S
+    verified = os.environ.get("HIRO_MEMORY_SCAN_VERIFIED") == "1"
+    # Cold Windows OCR can spend the legacy four-second budget on its first
+    # frame. Always permit the two observations required for stability.
+    deadline = time.monotonic() + (12.0 if verified else WAIT_S)
+    attempts = 0
+    previous, stable = None, 0
     while True:
         img = d.screenshot()
+        attempts += 1
         boxes = _texts(img)
         panel = "".join(t for t, b in boxes if 165 <= (b[1] + b[3]) // 2 <= 515)
-        page = detail_page(boxes)
-        if (prev_texts is None or panel != prev_texts) and (want_page is None or page == want_page):
-            return img, boxes, panel, True
-        if time.monotonic() > deadline:
+        page = detail_page(boxes, img)
+        if verified and not picker_detail_open(boxes):
+            return img, boxes, panel, False
+        correct = ((prev_texts is None or panel != prev_texts) and (want_page is None or page == want_page)
+                   and (want_cell is None or verified_selected_cell(img) == want_cell))
+        if correct:
+            stable = stable + 1 if previous == (page, panel) else 1
+            if not verified or stable >= 2:
+                return img, boxes, panel, True
+        else:
+            stable = 0
+        previous = (page, panel)
+        if (time.monotonic() > deadline and (not verified or attempts >= 2)) or (verified and attempts >= 12):
             return img, boxes, panel, False
         time.sleep(POLL_S)
+
+
+def _live_verified(d, pages: int, frames_dir: Path) -> list[dict]:
+    """Fail closed on cell/page transitions; never click the covered third row."""
+    from hiro.vision.memory import merge_detail, read_memory_detail
+
+    def wait(page, cell=None, previous=None):
+        frame = _wait_change(d, previous, page, want_cell=cell)
+        if not frame[3]:
+            raise MemoryScanPending(f"Memory picker cell {cell}, detail page {page} not verified; scanner stopped")
+        return frame
+
+    out, seen, previous_p1, previous_p2 = [], set(), None, None
+    for page in range(pages):
+        new_on_page = 0
+        for r, y in enumerate(GRID_Y[:2]):
+            for c, x in enumerate(GRID_X):
+                wait(1)  # Verify the picker again before any cell input.
+                d.click(x, y)
+                img1, boxes1, panel1, _ = wait(1, (r, c), previous_p1)
+                d1 = read_memory_detail(img1, boxes1)
+                d.click(*PAGER_NEXT)
+                img2, boxes2, panel2, _ = wait(2, (r, c), previous_p2)
+                d2 = read_memory_detail(img2, boxes2)
+                d.click(*PAGER_PREV)
+                wait(1, (r, c))  # Complete the return before another cell click.
+                previous_p1, previous_p2 = panel1, panel2
+                rec = merge_detail(d1, d2)
+                sig = _signature(rec)
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                idx = len(out)
+                f1, f2 = frames_dir / f"{idx:03d}-p1.jpg", frames_dir / f"{idx:03d}-p2.jpg"
+                cv2.imwrite(str(f1), img1)
+                cv2.imwrite(str(f2), img2)
+                rec.update(index=idx, page=page, cell=[r, c], frames={"p1": str(f1), "p2": str(f2)},
+                           problems=[f"缺 {k}" for k in ("card", "timing", "stats") if not rec.get(k)])
+                out.append(rec)
+                new_on_page += 1
+                print(idx, page, r, c, (rec.get("card") or {}).get("name"), len(rec.get("stats") or []), flush=True)
+        if not new_on_page or page + 1 == pages:
+            break
+        # Two complete rows per screen: scroll less than two rows, retaining overlap.
+        d.swipe(360, 820, 360, 560, 1.0)
+        time.sleep(1.5)
+    return out
 
 
 def live(pages: int, frames_dir: Path) -> list[dict]:
@@ -81,6 +148,8 @@ def live(pages: int, frames_dir: Path) -> list[dict]:
 
     d = connect()
     frames_dir.mkdir(parents=True, exist_ok=True)
+    if os.environ.get("HIRO_MEMORY_SCAN_VERIFIED") == "1":
+        return _live_verified(d, pages, frames_dir)
     out, seen, prev_p1, prev_p2 = [], set(), None, None  # 上一份回忆两页的文字：新的一份两页都要和它不同才算刷新了
     for page in range(pages):
         new_on_page = 0

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+import os
 
 import cv2
 import numpy as np
@@ -44,8 +45,31 @@ def _cy(b) -> int:
     return (b[1] + b[3]) // 2
 
 
-def detail_page(boxes) -> int | None:
+def picker_detail_open(boxes) -> bool:
+    """The memory inventory picker, excluding formation/details dialogs."""
+    return (any("キャンセル" in t and b[1] > 1100 for t, b in boxes)
+            and any("決定" in t and b[1] > 1100 for t, b in boxes)
+            and any("所持メモリー" in t and b[1] > 990 for t, b in boxes))
+
+
+def fixed_detail_page(img: MatLike, boxes) -> int | None:
+    """English OCR of the fixed dark 1/2 or 2/2 pager, only on the picker."""
+    from hiro.vision.ocr import ocr
+
+    if img.shape[:2] != (1280, 720) or not picker_detail_open(boxes):
+        return None
+    gray = cv2.cvtColor(img[505:557, 310:410], cv2.COLOR_BGR2GRAY)
+    _, pre = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
+    pre = cv2.copyMakeBorder(pre, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+    text = "".join(t for t, _ in ocr(cv2.cvtColor(pre, cv2.COLOR_GRAY2BGR), scale=4, languages=("en-US",)))
+    match = re.fullmatch(r"([12])/2", re.sub(r"\s", "", text))
+    return int(match.group(1)) if match else None
+
+
+def detail_page(boxes, img: MatLike | None = None) -> int | None:
     """详情框当前是第几页（1 / 2）；页码读不到时按内容判断。"""
+    if os.environ.get("HIRO_MEMORY_SCAN_VERIFIED") == "1" and img is not None:
+        return fixed_detail_page(img, boxes)
     for t, b in boxes:
         if PAGER_Y[0] <= _cy(b) <= PAGER_Y[1] and (m := re.fullmatch(r"([12])/2", _norm(t))):
             return int(m.group(1))
@@ -148,7 +172,7 @@ def read_memory_detail(img: MatLike, boxes=None) -> dict | None:
         from hiro.vision.pages import _texts
 
         boxes = _texts(img)
-    page = detail_page(boxes)
+    page = detail_page(boxes, img)
     if page is None:
         return None
     return {"page": page, **(read_card_page(img, boxes) if page == 1 else read_ability_page(img, boxes))}
@@ -165,6 +189,26 @@ def merge_detail(card_page: dict | None, ability_page: dict | None) -> dict:
 
 GRID_X = (140, 360, 580)  # 网格三列中心（与 .temp/memory_scan2.py 一致）
 SELECT_CORNER_MIN = 0.03
+
+
+def verified_selected_cell(img: MatLike, rows_y=(647, 787)) -> tuple[int, int] | None:
+    """Require four orange corner marks; orange card art alone is insufficient.
+
+    The third row is covered by controls on the Windows picker. Reading only
+    the two complete rows also avoids interpreting their orange buttons as cards.
+    """
+    if img.shape[:2] != (1280, 720):
+        return None
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    orange = (hsv[:, :, 0] >= 8) & (hsv[:, :, 0] <= 22) & (hsv[:, :, 1] >= 150) & (hsv[:, :, 2] >= 200)
+    matches = []
+    for r, y in enumerate(rows_y):
+        for c, x in enumerate(GRID_X):
+            corners = [float(orange[y + dy - 9:y + dy + 9, x + dx - 9:x + dx + 9].mean())
+                       for dx, dy in ((-109, -65), (109, -65), (-109, 65), (109, 65))]
+            if min(corners) >= 0.25:
+                matches.append((r, c))
+    return matches[0] if len(matches) == 1 else None
 
 
 def selected_cell(img: MatLike, rows_y=(647, 787, 920)) -> tuple[int, int] | None:

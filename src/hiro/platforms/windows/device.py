@@ -65,7 +65,7 @@ def connect(backend: str = "auto"):
 
 def real_click(lx: int, ly: int) -> None:
     """Explicit foreground fallback; refresh geometry before translating input."""
-    device = connect("windows_native")
+    device = connect()
     try:
         device.click(lx, ly)
     finally:

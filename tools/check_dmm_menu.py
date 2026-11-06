@@ -44,6 +44,12 @@ def home_matches(frame, reference):
 
 
 def traced_click(device, window, x, y, output):
+    if window is None:
+        device.click(x, y)
+        report = {'logical': [x, y], 'backend': 'windows_broker', 'acknowledged': True}
+        output.write_text(json.dumps(report, indent=2), encoding='utf-8')
+        print(json.dumps({'input_diagnostic': report}), flush=True)
+        return
     import win32gui
     from kotonebot.interop.win import mouse
     physical = tuple(device.scaler.logic_to_physical((x,y)))
@@ -78,7 +84,7 @@ def traced_click(device, window, x, y, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--backend', choices=['windows_native','windows_sendinput'], default='windows_native')
+    parser.add_argument('--backend', choices=['windows_native','windows_sendinput','windows_broker'], default='windows_native')
     parser.add_argument('--close-existing', action='store_true', help='Only close an already recognized menu, then verify home')
     args = parser.parse_args()
     import cv2
@@ -87,8 +93,12 @@ def main():
     from hiro.platforms.windows.ocr import ocr_boxes
     from hiro.platforms.windows.target import ensure_input_access, resolve
 
-    window, _ = resolve()
-    ensure_input_access(window)
+    if args.backend == 'windows_broker':
+        from hiro.platforms.windows.broker import connect
+        window = None
+    else:
+        window, _ = resolve()
+        ensure_input_access(window)
     root = Path('reports/windows-probe')
     reference = cv2.imread(str(root / 'logical.png'))
     if reference is None or reference.shape != (1280, 720, 3):

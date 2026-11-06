@@ -65,7 +65,10 @@
 
 已将设备、OCR、窗口管理的 Mac 实现隔离到 `hiro.platforms.macos`，公共入口按需选择实现。
 现有决策规则与状态逻辑保持不变。已提供 Windows 前台设备、离线日文 OCR 和基于 KAA 模板的 LIVE 识别原型，需显式配置启用。
-**DMM 实机点击和完整游玩尚未验收；未知横屏会停下，隐藏控件与部分 LIVE 页面尚未覆盖。**
+**DMM 菜单开关与普通权限主程序连接管理员常驻代理已实测通过；完整游玩仍在验收，未知横屏会停下。**
+
+- [双进程代理启动与调试](docs/windows-broker.md)：首次 UAC 后复用执行端，主程序重启不重复提权。
+- [原项目公开功能移植清单](docs/windows-feature-parity.md)。
 
 - [Windows 安装、数据准备与配置](docs/windows-setup.md)
 

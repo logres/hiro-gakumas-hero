@@ -1060,6 +1060,81 @@ def action_commit(self, action) -> None:
 PREP_STEPS = ("step1", "step2", "step3", "step4", "_select_set", "_select_idol")  # KAA 培育准备里每一步前后各报一次进展（D38）
 
 
+class SetSelectionPending(FormationMismatch):
+    """编成页 / 编成号无法核实；留在当前页，不继续开局。"""
+
+
+def _navigate_support_set(index, read, click, sleep):
+    """Step 2/3: at most 19 single moves, each verified before another click.
+
+    Unknown counters may be animation frames, so read up to three times without
+    clicking. A different valid counter must be exactly the expected next set.
+    """
+    if type(index) is not int or not 1 <= index <= 20:
+        raise ValueError("Support set must be an integer in 1..20")
+
+    def counter(expected=None, previous=None):
+        for attempt in range(3):
+            value = read()
+            if value is not None and value != previous:
+                if type(value) is not int or not 1 <= value <= 20:
+                    raise SetSelectionPending(f"Invalid support counter: {value!r}")
+                if expected is not None and value != expected:
+                    raise SetSelectionPending(f"Support counter expected {expected}, read {value}")
+                return value
+            if attempt < 2:
+                sleep(0.3)
+        raise SetSelectionPending("Support counter unknown or unchanged after bounded reads")
+
+    current = counter()
+    for _ in range(19):
+        if current == index:
+            return
+        direction = 1 if current < index else -1
+        click("next" if direction == 1 else "prev")
+        sleep(0.3)
+        current = counter(current + direction, current)
+    if current != index:
+        raise SetSelectionPending(f"Support set {index} not reached (at {current})")
+
+
+def _bounded_select_set(original):
+    """Opt-in bounded Step 2/3 selector with the shared fixed white counter.
+
+    Windows Step 3 frame confirms the same counter crop and arrow geometry as
+    Step 2. Each read must remain on the initially identified preparation step.
+    """
+    import functools
+    import os
+
+    @functools.wraps(original)
+    def wrapped(index):
+        if os.environ.get("HIRO_BOUNDED_SET_SELECTION") != "1":
+            return original(index)
+        from kaa.tasks import R
+        from hiro.vision.support_screens import ARROWS, step2_page
+
+        device.screenshot()
+        if R.Produce.TextStepIndicator2.exists():
+            indicator = R.Produce.TextStepIndicator2
+        elif R.Produce.TextStepIndicator3.exists():
+            indicator = R.Produce.TextStepIndicator3
+        else:
+            raise SetSelectionPending("Unknown formation screen; no set click")
+
+        def read():
+            img = device.screenshot()
+            if not indicator.exists():
+                raise SetSelectionPending("Formation step changed; no set click")
+            page = step2_page(img)
+            return page[0] if page else None
+
+        return _navigate_support_set(index, read, lambda key: device.click(*ARROWS["step2"][key]), time.sleep)
+
+    wrapped._hiro_bounded_set = True
+    return wrapped
+
+
 def _prep_progress(fn, name: str):
     """KAA 培育准备的一步：开始前、结束后（含异常）各报一次进展，空转看门狗不会把整段准备算成没进展。
     单步自己卡住 STALL_S 秒照样停机。functools.wraps 带上原函数的 _hiro_* 标记，重复 apply 不会多包。"""
@@ -1091,6 +1166,8 @@ def apply() -> None:
 
     # kaa.tasks 导出了同名任务函数 produce，遮住了子包属性，只能按模块全名导入
     prep = importlib.import_module("kaa.tasks.produce.prepare")
+    if not getattr(prep._select_set, "_hiro_bounded_set", False):
+        prep._select_set = _bounded_select_set(prep._select_set)
     io.locate_idol = locate_idol_by_swipe
     prep.locate_idol = locate_idol_by_swipe
     SkillCardChangeContext.commit_stage1 = change_stage1
@@ -1099,6 +1176,13 @@ def apply() -> None:
     ActionSelectContext.commit = action_commit
     from kaa.tasks import R
     from kaa.tasks.produce.new.page import ProducePage
+
+    # prepare() blocks here immediately after Step 1 Next, before step2() runs.
+    # Opt-in only: preserve the explicitly selected card when a new variant is offered.
+    from hiro.produce.idol_switch import Step2Wait
+
+    if not getattr(R.Produce.TextStepIndicator2, "_hiro_idol_switch", False):
+        R.Produce.TextStepIndicator2 = Step2Wait(R.Produce.TextStepIndicator2)
 
     ProducePage._check_action_like = _guard_action_like(ProducePage._check_action_like)
     global _ORIG_DISCARD_CONFIRM

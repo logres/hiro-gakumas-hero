@@ -1037,24 +1037,28 @@ def _detail_state_facts(img):
 def _review_current_card_details(state, frame, rec):
     """Optional read-only inspection; never reuse effects after another action."""
     if os.environ.get("HIRO_EXAM_CARD_DETAILS") != "1":
-        return
+        return True
     from hiro.brain.card_effect_evidence import attach_card_effect_context
     from hiro.exec.card_detail_review import image_sha256, review_exam_hand_details
 
     facts = _detail_state_facts(frame.img)
     if facts is None:
         rec.log("exam_card_details_unavailable", reason="initial_state_unverified")
-        return
+        return True
     result = review_exam_hand_details(
         frame.img, state.hand, shoot=device.screenshot, click=device.click, sleep=sleep,
         same_state=lambda image: _detail_state_facts(image) == facts,
         on_detail=lambda image, evidence: rec.log("exam_card_detail", image=image, evidence=evidence))
     rec.log("exam_card_detail_review", image=result.image, restored=result.restored,
             evidence=result.evidence, problems=result.problems)
+    if result.problems == ["initial_state_unverified"]:
+        return False  # No UI input occurred. Reobserve without ending/restarting this exam.
     if not result.restored:
-        raise RuntimeError("Card detail inspection did not restore the original exam; no battle input sent")
+        from hiro.loop.resume import ResumeBlocked
+        raise ResumeBlocked("Card detail inspection did not restore the original exam; no battle input sent")
     state.public_info = attach_card_effect_context(
         state.public_info, state.hand, result.evidence, snapshot_sha256=image_sha256(frame.img))
+    return True
 
 
 def run_exam(
@@ -1101,6 +1105,7 @@ def run_exam(
     last_action = None
     UNPLAYABLE["hit"] = False
     result_info: dict = {}
+    exam_completed = False
     last_state = None
     try:
         for _ in Loop(interval=0.1):
@@ -1112,6 +1117,7 @@ def run_exam(
                     continue
             with _phase("ended"):
                 if ended():
+                    exam_completed = True
                     break
             frame = None
             if animating and not slow:
@@ -1164,7 +1170,9 @@ def run_exam(
                 animating = True
                 continue
             wait_state.reset()
-            _review_current_card_details(state, frame, rec)
+            if not _review_current_card_details(state, frame, rec):
+                animating = True
+                continue
             last_state = state
             obs = session.last if session is not None else None
             # ---- 决策（插件）
@@ -1273,5 +1281,5 @@ def run_exam(
         source.end(result_info or None)
         advisor.on_round_end(result_info or None)
         if session is not None:
-            save_exam_memory(session.trace.dir, memory, finished=True)
+            save_exam_memory(session.trace.dir, memory, finished=exam_completed)
     return memory

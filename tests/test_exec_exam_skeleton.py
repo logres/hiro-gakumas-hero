@@ -153,3 +153,32 @@ def test_explicit_identity_reaches_source_without_profile_substitution(env):
     other = Source([])
     ex.run_exam(Brain(), "qualify-1", Rec(), lambda: True, source=other, advisor=adv)
     assert other.context["idol_card_id"] is None
+
+
+def test_detail_preopen_change_reobserves_without_deciding(env, monkeypatch):
+    readings = iter([False, True])
+    monkeypatch.setattr(ex, "_review_current_card_details", lambda *args: next(readings))
+    src, adv, brain = Source([]), Advisor(), Brain()
+    done = iter([False, False, True])
+    ex.run_exam(brain, "r1", Rec(), lambda: next(done), source=src, advisor=adv)
+    assert src.calls.count("read") == 2
+    assert brain.commits == ["play:0"]
+    assert sum(c[0] == "start" for c in adv.calls if isinstance(c, tuple)) == 1
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_only_observed_exam_end_finishes_saved_memory(env, monkeypatch, tmp_path, completed):
+    saved = []
+    monkeypatch.setattr(ex, "load_exam_memory", lambda *args: None)
+    monkeypatch.setattr(ex, "save_exam_memory", lambda *args, **kw: saved.append(kw))
+    session = NS(state=NS(exam_session=NS(label=None)), trace=NS(dir=tmp_path))
+    def ended():
+        if not completed:
+            raise RuntimeError("interrupted before exam result")
+        return True
+    if completed:
+        ex.run_exam(Brain(), "qualify-3", Rec(), ended, source=Source([]), advisor=Advisor(), session=session)
+    else:
+        with pytest.raises(RuntimeError, match="interrupted"):
+            ex.run_exam(Brain(), "qualify-3", Rec(), ended, source=Source([]), advisor=Advisor(), session=session)
+    assert saved[-1]["finished"] is completed

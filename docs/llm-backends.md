@@ -42,4 +42,4 @@ $env:OPENAI_BASE_URL = 'https://api.openai.com/v1'
 API key 的计费和额度属于对应 API 服务，不等于 CLI 登录额度。不要把 key 写进仓库。
 
 实现依据：[OpenAI 官方非交互模式文档](https://developers.openai.com/codex/noninteractive)、[CLI 配置参考](https://developers.openai.com/codex/config-reference)，并核对本机 CLI `exec --help`。
-自动化测试只用 mock 和本地假服务；未进行真实付费请求，也未验证游戏截图的实际模型识别质量。
+API 协议自动化测试使用 mock 和本地假服务，真实 API key/端点尚未验收。Codex CLI 已在实际 DMM 考试中完成文本决策及定制卡详情图像转录；转录受身份校验和未知字段约束，个别成功不代表所有截图识别准确。未以真实 API 付费请求验收。

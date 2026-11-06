@@ -821,7 +821,8 @@ class HiroController(ProduceController):
         from hiro.vision.scene import classify_current
 
         name = classify_current().scene
-        mapped = {"SELECT_CARD": SceneType.SELECT_CARD, "SELECT_DRINK": SceneType.SELECT_DRINK}.get(name)
+        mapped = {"SELECT_CARD": SceneType.SELECT_CARD, "SELECT_DRINK": SceneType.SELECT_DRINK,
+                  "STUDY": SceneType.STUDY, "OUTING": SceneType.OUTING}.get(name)
         if mapped is None:
             return scene
         s = HiroController.session

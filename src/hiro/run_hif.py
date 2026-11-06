@@ -120,6 +120,16 @@ def _recover_date_change(session) -> bool:
     return recover_to_home(device.screenshot, lambda x, y: device.click(x, y), ocr_boxes, lambda img: at_home())
 
 
+def configure_run_llm(spec: str | None, *, no_llm: bool = False) -> None:
+    """Use the CLI choice for lazy adapters too, including screenshot rescue."""
+    from hiro.loop import rescue
+
+    if spec:
+        os.environ["HIRO_LLM"] = spec
+    rescue.LLM_UNKNOWN = not no_llm and os.environ.get("HIRO_RESCUE_LLM", "1") != "0"
+    HiroController._rescuer = None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["resume", "new"])
@@ -141,6 +151,7 @@ def main():
     parser.add_argument("--allow-discard", action="store_true",
                         help="new 时允许破弃其他端末进行中的培育（用户明确同意后才加；KAA 会自动确认「プロデュースデータの破棄」）")
     args = parser.parse_args()
+    configure_run_llm(args.llm, no_llm=args.no_llm)
     if args.debug_recog:
         os.environ["HIRO_DEBUG_RECOG"] = "1"  # Session 读它：全部 Check 写进 trace、页面变化都存帧
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")

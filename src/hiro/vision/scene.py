@@ -27,7 +27,7 @@ from hiro.vision.pitem_select import is_select_pitem
 from hiro.vision.support import is_start_confirm
 from hiro.vision.signature import match as signature_match
 
-# 授業（STUDY）与おでかけ（OUTING）是同一套选项事件界面，签名分不开，交给 KAA 按标题图标区分
+# 授業与おでかけ签名分不开；KAA优先，已选中导致IDLE时用标题+完整事件布局核对。
 SIGNATURE_DEFER = {"OUTING", "STUDY"}
 # 三选一的选卡 / 选饮料弹窗布局相同（受け取る、カード除去 椭圆按钮），SELECT_DRINK 签名是这些通用按钮，
 # 选卡页会以 2/3 票判成 SELECT_DRINK（第四局 r3/r4 实机 3 帧）；而饮料满、已选中一瓶的差し入れ页 KAA 认不出，只能靠签名。
@@ -102,6 +102,41 @@ def _card_or_drink(img) -> str:
     return "SELECT_CARD" if CardSelectContext(ProducePage(), None).fetch_cards() else "SELECT_DRINK"
 
 
+
+def _selected_event(img) -> str | None:
+    """Recover selected study/outing pages only with title AND event-layout evidence.
+
+    A title alone (including an acquisition/log mentioning study) is insufficient.
+    read_event_choices verifies the three row positions and unique saturated row;
+    require all row texts plus the selected effect detail before dispatching.
+    """
+    import unicodedata
+    from hiro.vision.ocr import ocr_boxes
+    from hiro.vision.event import read_event_choices, ROW_Y
+
+    if img.shape[:2] != (1280, 720):
+        return None
+    titles = {unicodedata.normalize("NFKC", "".join(t.split()))
+              for t, score, _ in ocr_boxes(img[35:90, 30:195], scale=4)
+              if score >= .85}
+    matched = titles.intersection({"授業", "おでかけ"})
+    if len(matched) != 1:
+        return None
+    fields = read_event_choices(img)
+    choices, selected = fields.get("choices"), fields.get("selected")
+    if (fields.get("complete") is not True or type(selected) is not int or selected not in range(3)
+            or not isinstance(choices, list) or len(choices) != 3
+            or not isinstance(fields.get("effect"), str) or len(fields["effect"].strip()) < 4):
+        return None
+    for index, choice in enumerate(choices):
+        if (not isinstance(choice, dict) or choice.get("index") != index
+                or not isinstance(choice.get("text"), str) or len(choice["text"].strip()) < 2
+                or choice.get("center") != [360, ROW_Y[index]]
+                or choice.get("selected") is not (index == selected)):
+            return None
+    return "STUDY" if matched == {"授業"} else "OUTING"
+
+
 def _fallback(img) -> str | None:
     """KAA 判不出时的像素兜底。界面 Sprite（页面签名）是自建素材，开源默认没有：签名本来能认的几页在这里补上。
     - quick.fallback_page：选行动页（「P手帳」标签）、Pドリンク所持上限 列表；
@@ -150,6 +185,9 @@ def classify_current() -> SceneResult:
             if hit is not None and hit[0] == "PRODUCE_LOG":
                 return done("produce", "PRODUCE_LOG")
         if scene is None or scene.type.name == "IDLE":
+            event = _selected_event(img)
+            if event is not None:
+                return done("produce", event)
             selecting = _selecting_dialog(img)
             if selecting is not None:
                 return done("produce", selecting)

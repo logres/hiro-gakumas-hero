@@ -1152,6 +1152,13 @@ class HiroHifStrategy(HifGrindStrategy):
             # 第 2 次改由执行侧换一张非保护卡（pick_change_target 跳过核心卡），还回来就停下，避免来回打转
             self._change_cancels = getattr(self, "_change_cancels", 0) + 1
             if self._change_cancels >= 2:
+                from hiro.brain.route_policy import legacy_or_yaruki
+
+                identity = ((self.s.state.produce or {}).get("idol_card_id")
+                            or getattr(getattr(self, "deciders", None), "idol_card_id", None)
+                            or (getattr(self, "profile", None).idol_id if getattr(self, "profile", None) else None))
+                if not legacy_or_yaruki(identity):
+                    self._stop("SKILL_CARD_CHANGE_2", "当前路线未确认适用やる気换卡策略：反复取消后停止，不强制换出卡牌", obs=obs, decision=d)
                 # 取消后又回到换卡页：游戏里阶段 1 没有取消键，取消只会绕回来（main8 实机死循环）。
                 # 改按决策器 choose_card_to_change 换出价值最低的非保护卡（规则选出，不是执行侧盲选）；没有可换的才停下
                 from hiro.brain.deciders import choose_card_to_change
@@ -1253,6 +1260,13 @@ class HiroHifStrategy(HifGrindStrategy):
     def _consult_open_dialog(self, d: Decision, done: set) -> Decision:
         """牌组未识别时决策器不出强化 / 删卡（q9、q10 第 12 天 440P 没花）。选卡对话框里能读到整副牌组（识别 26675e4 + 执行 c9ede96），
         所以这时先打开对话框，由 enhance_card / remove_card 在对话框里选；决策不选会点キャンセル 退回。强化优先（第九局复盘：+24–30%）。"""
+        from hiro.brain.route_policy import ROUTE_POLICY_SKIP, legacy_or_yaruki
+
+        identity = ((self.s.state.produce or {}).get("idol_card_id")
+                    or getattr(getattr(self, "deciders", None), "idol_card_id", None)
+                    or (getattr(self, "profile", None).idol_id if getattr(self, "profile", None) else None))
+        if ROUTE_POLICY_SKIP in d.warnings or not legacy_or_yaruki(identity):
+            return d
         if d.action.kind is not ActionKind.SHOP_END or not any("牌组未识别" in w for w in d.warnings):
             return d
         if "轮间留" in (d.reason or ""):

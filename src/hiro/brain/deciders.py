@@ -106,6 +106,22 @@ class ProduceDeciders:
               "SKILL_CARD_CHANGE_2": self.change_remove, "SKILL_CARD_REMOVAL": self.remove_card,
               "SKILL_CARD_ENHANCE": self.enhance_card, "PDRINK_MAX_CONFIRM": self.drink_overflow_confirm}[page]  # fmt: skip
         t0 = time.monotonic()
+        # Other routes must not fall back into specialist spending/removal
+        # policies when their own metadata is incomplete.
+        from hiro.brain.route_guard import guard
+        try:
+            scoped = guard(self, page, state, **kw)
+        except Exception as exc:
+            logger.exception("路线决策 %s 异常", page)
+            scoped = Decision(Action.ui(ActionKind.WAIT, why=str(exc)), "路线信息不完整：停止，不套用元气专用规则",
+                              "fallback", 0.1, warnings=["route_policy_skip"], decider=page.lower())
+        if scoped is not None:
+            invalid = None if scoped.action.kind is ActionKind.WAIT else _invalid_decision(page, scoped, n_options, kw)
+            if invalid:
+                scoped = Decision(Action.ui(ActionKind.WAIT, why=invalid), invalid, "fallback", 0.1,
+                                  warnings=["route_policy_skip"], decider=page.lower())
+            scoped.seconds = round(time.monotonic() - t0, 3)
+            return scoped
         try:
             d = fn(state, **kw)
             why = _invalid_decision(page, d, n_options, kw)
@@ -150,6 +166,9 @@ class ProduceDeciders:
                 return Decision(Action.activate_effect(best), f"饮料兜底：按饮料类别默认档位 / 稀有度选第 {best + 1} 瓶", "fallback", 0.4,
                                 warnings=warn, decider="select_drink")  # fmt: skip
         if page == "SELECT_CARD":
+            if not self._uses_yaruki_policy(state):
+                return Decision(Action.ui(ActionKind.WAIT, why=why), "选卡规则失败：停止，不套用其他路线的卡牌评级", "fallback", 0.1,
+                                warnings=warn, decider="select_card")
             raw = state.page_fields.get("candidates") or []
             known = [i for i, c in enumerate(raw) if c.get("card_id") and (n is None or i < n)]
             if known:
@@ -328,7 +347,85 @@ class ProduceDeciders:
                         warnings=["ProduceState 字段不全，没有预演"], decider="action_select")  # fmt: skip
 
     # ---------------------------------------------------------------- 三选一
+    def _selected_card_idol(self, state: GameState) -> dict | None:
+        from hiro.state.catalog import CatalogUnavailable
+        from hiro.state.context import catalog
+
+        identity = (state.produce or {}).get("idol_card_id") or self.idol_card_id or (self.profile.idol_id if self.profile else None)
+        if not identity:
+            return None
+        try:
+            return catalog().one("IdolCard", identity.replace("i_card-skin-", "i_card-"))
+        except (CatalogUnavailable, KeyError):
+            return None
+
+    def _uses_yaruki_policy(self, state: GameState) -> bool:
+        from hiro.brain.route_policy import legacy_or_yaruki
+        identity = (state.produce or {}).get("idol_card_id") or self.idol_card_id or (self.profile.idol_id if self.profile else None)
+        return legacy_or_yaruki(identity)
+
+    def _select_card_for_selected_idol(self, state: GameState) -> Decision:
+        """Use catalog recommendation metadata without importing another route's tiers."""
+        from hiro.brain.hif_rules import is_recommended
+        from hiro.state.catalog import CatalogUnavailable
+        from hiro.state.context import catalog
+
+        raw = state.page_fields.get("candidates") or []
+        candidates = [Candidate(Action.activate_effect(i), preview={"card_id": c["card_id"], "upgrade": c.get("upgrade")})
+                      for i, c in enumerate(raw) if c.get("card_id")]
+
+        def wait(reason):
+            return Decision(Action.ui(ActionKind.WAIT, why=reason), reason, "rule", 0.2, candidates, decider="select_card")
+
+        idol = self._selected_card_idol(state)
+        if not idol or idol.get("examEffectType") in (None, "", "ProduceExamEffectType_Unknown"):
+            return wait("偶像推荐效果未知：停止选卡，不刷新寻找其他路线的核心卡")
+        owned = {}
+        for card in (state.produce or {}).get("deck") or []:
+            cid = card.get("card_id") if isinstance(card, dict) else card.card_id
+            upgrade = card.get("upgrade", 0) if isinstance(card, dict) else card.upgrade
+            owned[cid] = max(owned.get(cid, -1), upgrade)
+        for cid in getattr(self, "seen_deck", {}) or {}:
+            owned.setdefault(cid, 0)
+        for cid in self.picked_musts:
+            owned.setdefault(cid, 0)
+        eligible = []
+        metadata = {}
+        rarity_rank = {"ProduceCardRarity_N": 0, "ProduceCardRarity_R": 1, "ProduceCardRarity_Sr": 2,
+                       "ProduceCardRarity_Ssr": 3, "ProduceCardRarity_Legend": 4}
+        for i, card in enumerate(raw):
+            cid, upgrade = card.get("card_id"), card.get("upgrade")
+            if not cid or not isinstance(upgrade, int) or isinstance(upgrade, bool):
+                continue
+            try:
+                row = catalog().card(cid, upgrade)
+            except (CatalogUnavailable, KeyError):
+                continue
+            recommended_effect = is_recommended(row, idol)
+            compatible = row.get("planType") in (idol.get("planType"), "ProducePlanType_Common") and row.get("planType") is not None
+            rarity = rarity_rank.get(row.get("rarity"))
+            if recommended_effect or (compatible and rarity is not None and isinstance(row.get("effectGroupIds"), list)):
+                eligible.append(i)
+                metadata[i] = (recommended_effect, rarity if rarity is not None else -1)
+        if not eligible:
+            return wait("没有确认推荐效果或兼容路线元数据的候选：停止，不为其他路线刷新")
+        recommended = state.page_fields.get("recommended")
+        def priority(i):
+            card = raw[i]
+            return (metadata[i][0], card["card_id"] not in owned, card["upgrade"] > owned.get(card["card_id"], -1), card["upgrade"], metadata[i][1],
+                    isinstance(recommended, int) and not isinstance(recommended, bool) and i == recommended)
+        best_rank = max(priority(i) for i in eligible)
+        tied = [i for i in eligible if priority(i) == best_rank]
+        chosen = min(tied, key=lambda i: raw[i]["card_id"])
+        reason = ("主数据确认符合本人推荐效果" if metadata[chosen][0] else "无明确推荐效果候选，主数据确认同路线或通用卡")
+        reason += "；优先未持有、强化较高、稀有度较高、游戏推荐候选"
+        if len(tied) > 1:
+            reason += f"；依据相同，按 card_id 排序取 {raw[chosen]['card_id']}"
+        return Decision(Action.activate_effect(chosen), reason, "rule", 0.85, candidates, decider="select_card")
+
     def select_card(self, state: GameState, *, change: bool = False) -> Decision:
+        if not self._uses_yaruki_policy(state):
+            return self._select_card_for_selected_idol(state)
         from hiro.state.context import for_llm, preview_card_pick, situation, to_previews
 
         raw = [c for c in state.page_fields.get("candidates") or []]

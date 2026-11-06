@@ -96,3 +96,38 @@ def test_active_exact_title_fallback_requires_active_tab(monkeypatch, title, tab
     monkeypatch.setattr(reader.deck, "_tab_active", lambda _: tab)
     monkeypatch.setattr(reader, "_lines", lambda *_: [{"text": title}])
     assert reader.is_exam_card_list(np.zeros((1280,720,3), np.uint8)) is expected
+
+
+def title_index(monkeypatch, entries=None):
+    monkeypatch.setattr(reader.deck, "card_from_name", lambda *_: None)
+    monkeypatch.setattr(reader.deck, "_cards_by_full_name", lambda: entries or {
+        "輝くキミへ+": [("card", 1)], "輝くキミへ+++": [("card", 3)]})
+
+
+def test_detail_lookalike_preserves_exact_grade(monkeypatch):
+    title_index(monkeypatch)
+    assert reader._detail_from_name("輝くキミヘ+++", {"card"}, all_ids_known=True) == {
+        "card_id":"card", "name":"輝くキミへ", "upgrade":3}
+    assert reader._detail_from_name("輝くキミヘ+", {"card"}, all_ids_known=True)["upgrade"] == 1
+    assert reader._detail_from_name("輝くキミヘ++", {"card"}, all_ids_known=True) is None
+
+
+def test_detail_lookalike_rejects_ambiguous_normalized_titles(monkeypatch):
+    title_index(monkeypatch, {"輝くキミへ+++": [("a",3)], "輝くキミヘ+++": [("b",3)]})
+    assert reader._detail_from_name("輝くキミヘ+++", {"a","b"}, all_ids_known=True) is None
+
+
+@pytest.mark.parametrize("text,ids,known", [
+    ("輝くキミヘ+++", {"different"}, True),
+    ("輝くキミヘ+++", {"card"}, False),
+    ("輝くキミへ++ナ", {"card"}, True)])
+def test_detail_lookalike_requires_known_candidate_and_no_other_edits(monkeypatch, text, ids, known):
+    title_index(monkeypatch)
+    assert reader._detail_from_name(text, ids, all_ids_known=known) is None
+
+
+def test_detail_exact_name_lookup_takes_priority(monkeypatch):
+    exact = {"card_id":"exact", "upgrade":3, "name":"name"}
+    monkeypatch.setattr(reader.deck, "card_from_name", lambda *_: exact)
+    monkeypatch.setattr(reader.deck, "_cards_by_full_name", lambda: pytest.fail("unneeded fallback"))
+    assert reader._detail_from_name("name+++", {"exact"}, all_ids_known=True) is exact

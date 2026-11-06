@@ -14,6 +14,29 @@ from hiro.vision.ocr import ocr_boxes
 DETAIL_REGION = (20, 102, 700, 390)
 
 
+def _detail_from_name(text, candidate_ids, *, all_ids_known):
+    """Exact master title first; only へ/ヘ may vary in the OCR fallback.
+
+    Restrict the fallback to a fully identified visible hand, retaining every
+    plus sign. A normalized title must prove one exact (base ID, grade).
+    """
+    exact = deck.card_from_name(text, candidate_ids)
+    if exact is not None:
+        return exact
+    if not all_ids_known or not candidate_ids:
+        return None
+    def fold(value):
+        return value.replace("＋", "+").replace(" ", "").strip().replace("ヘ", "へ")
+    normalized = fold(text)
+    hits = [(name, card_id, grade)
+            for name, entries in deck._cards_by_full_name().items() if fold(name) == normalized
+            for card_id, grade in entries if card_id in candidate_ids]
+    if len({(card_id, grade) for _, card_id, grade in hits}) != 1:
+        return None
+    name, card_id, grade = hits[0]
+    return {"card_id": card_id, "name": name.rstrip("+"), "upgrade": grade}
+
+
 def _lines(img, region):
     x1, y1, x2, y2 = region
     return [{"text": t, "confidence": float(p), "box": [a+x1, b+y1, c+x1, d+y1]}
@@ -99,9 +122,10 @@ def read_exam_hand_details(img: MatLike, *, include_detail: bool = True) -> dict
         out["problems"].append("visible complete hand cells do not match heading count")
     out["selected"] = _selected(img, cards)
     ids = {c["card_id"] for c in cards if c.get("card_id")}
+    all_ids_known = bool(cards) and all(c.get("card_id") for c in cards)
     # Identity is read only in the title band, never from effect text.
     hits = [hit for line in out["detail_lines"] if line["box"][1] < 170
-            if (hit := deck.card_from_name(line["text"], ids)) is not None]
+            if (hit := _detail_from_name(line["text"], ids, all_ids_known=all_ids_known)) is not None]
     unique = {(h["card_id"], h["upgrade"]) for h in hits}
     detail = hits[0] if len(unique) == 1 else None
     out["detail"] = detail

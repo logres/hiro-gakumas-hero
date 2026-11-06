@@ -1495,6 +1495,9 @@ class HiroHifStrategy(HifGrindStrategy):
         self.rec.log("exam_result", image=img, exam=label, result={k: res.get(k) for k in ("score", "rank", "passed", "exam_no", "rank_line")})
         self.s.observe(scene="HIF_EXAM_RESULT", img=img, fields=res)
         self._require_deck_review("考试结算后需复核牌组；未推断任何具体增删、强化或定制")
+        # Persist the result before a retry can replace the page or the process
+        # can stop; observing alone leaves it waiting for a later record call.
+        self.s.record()
         if res.get("passed") is not False:
             return False
         texts = ocr.ocr()

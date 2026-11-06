@@ -32,6 +32,8 @@ ATTRS = {"ボーカル": "vocal", "ダンス": "dance", "ビジュアル": "visu
 
 # 720x1280 逻辑坐标 (x1, y1, x2, y2)。HUD 数值取自客户端布局 + 截图校准（hiro.vision.layout），其余仍为实测
 BOX_TURNS = layout.box(layout.EXAM, "ExamAuditionTurnView/txt/TurnValue")
+# The separate white capsule shows blue +N; the main dial excludes these turns.
+BOX_EXTRA_TURNS = (95, 120, 185, 158)
 BOX_ATTR = (105, 55, 230, 120)
 BOX_MY_SCORE = (222, 128, 262, 166)
 _GENKI_LAYOUT = layout.box(layout.EXAM, "GaugeRoot/GenkiGauge/IconRoot/Icon/GenkiValue")
@@ -857,11 +859,53 @@ def read_hand_badges(img: MatLike) -> list[int | None] | None:
 EXAM_CACHE = RegionCache()  # 考试循环逐帧调用时复用不变区域的结果；离线评测传 cache=None
 
 
+def read_extra_turns(img: MatLike) -> int | None:
+    """Read the independent +N capsule. Missing capsule is 0; unreadable N is unknown."""
+    x1, y1, x2, y2 = BOX_EXTRA_TURNS
+    crop = img[y1:y2, x1:x2]
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, (0, 0, 210), (180, 65, 255))
+    _, _, stats, _ = cv2.connectedComponentsWithStats(white)
+    pills = [s for s in stats[1:] if s[4] >= 500 and s[0] <= 12
+             and s[0] + s[2] >= 50 and s[1] <= 8 and s[1] + s[3] >= 30]
+    if not pills:
+        return 0
+    x, y, w, h, _ = max(pills, key=lambda s: s[4])
+    blue = cv2.inRange(hsv[y:y+h, x:x+w], (85, 100, 130), (115, 255, 255))
+    # The pill can touch bright scenery; only its fixed text row contains +N.
+    blue[:max(0, 5-y)] = 0
+    blue[max(0, 30-y):] = 0
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(blue)
+    components = sorted((s[0], i, s) for i, s in enumerate(stats[1:], 1) if s[4] >= 10)
+    templates = _templates()
+    digits = []
+    for index, (_, label, s) in enumerate(components):
+        cx, cy, cw, ch, _ = s
+        glyph = labels[cy:cy+ch, cx:cx+cw] == label
+        if index == 0:
+            if not _is_plus(cv2.resize(glyph.astype(np.uint8), None, fx=3, fy=3)):
+                return None
+            continue
+        if not templates:
+            return None
+        score, char = max((_iou(_scale(glyph), t), c) for c, t in templates.items())
+        if score < 0.7 or not char.isdigit():
+            return None
+        digits.append(char)
+    return int("".join(digits)) if digits else None
+
+
+def read_remaining_turns(img: MatLike, *, fallback: bool = True) -> int | None:
+    main = (read_number if fallback else read_int)(img, BOX_TURNS, align=True)
+    extra = read_extra_turns(img)
+    return main + extra if main is not None and extra is not None else None
+
+
 def read_hif_hud(img: MatLike, *, fallback: bool = False) -> dict:
     """考试 HUD 三个数：剩余回合、体力、元气。只用游戏字体比对（约 10–30ms），用于稳定帧判断。
     字体比对没把握（被特效遮住）时为 None；fallback=True 时退回 ddddocr（每个约 200ms）。"""
     read = read_number if fallback else read_int
-    return {"remaining_turns": read(img, BOX_TURNS, align=True), "hp": read(img, BOX_HP, align=True),
+    return {"remaining_turns": read_remaining_turns(img, fallback=fallback), "hp": read(img, BOX_HP, align=True),
             "genki": read(img, BOX_GENKI, align=True)}  # fmt: skip
 
 
@@ -890,7 +934,7 @@ def _read_hif_exam(img: MatLike, cache: RegionCache | None) -> dict:
     x1, y1, x2, y2 = RANK_STRIP
     drink_slots = read_drink_slots(img, cache=cache)
     out = {
-        "remaining_turns": num("turns", BOX_TURNS),
+        "remaining_turns": read_remaining_turns(img),
         **_parse_attr(texts["attr"]),
         "finals_round": None,  # 本战时由 read_finals_ranking 覆盖为 1 / 2
         **cached(cache, "ranking", img[y1:y2, x1:x2], lambda: read_ranking(img)),

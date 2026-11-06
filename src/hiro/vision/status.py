@@ -227,11 +227,22 @@ def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple
 
 
 def read_status_column(img: MatLike, *, cache: RegionCache | None = None) -> list[dict]:
-    """从上往下读出全部槽位，遇到空槽停止。cache：某槽（图标 + 数值）与上次相同则复用该槽结果。"""
+    """检查全部槽位；后方仍有图标的低分槽保持未知，不能截断状态列。
+
+    Trailing empty slots are omitted. An uncertain outline before a detected
+    slot is not evidence of absence, even when every readable icon is known.
+    """
+    scores = [diamond_score(img, k) for k in range(MAX_SLOTS)]
+    occupied = [k for k, score in enumerate(scores) if score >= DIAMOND_MIN]
+    if not occupied:
+        return []
     out = []
-    for k in range(MAX_SLOTS):
-        if diamond_score(img, k) < DIAMOND_MIN:
-            break  # 空槽：状态栏到此为止
+    for k in range(occupied[-1] + 1):
+        if scores[k] < DIAMOND_MIN:
+            out.append({"slot": k, "kind": "status", "key": None,
+                        "value": None, "score": round(scores[k], 3),
+                        "uncertain": "slot_outline"})
+            continue
         cy = _slot_y(k)
         region = img[cy - SLOT_HALF - 4 : cy + 36, SLOT_X - SLOT_HALF - 4 : SLOT_X + 130]
         out.append(cached(cache, f"status{k}", region, lambda k=k: _read_slot(img, k)))

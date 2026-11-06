@@ -108,10 +108,10 @@ def test_hif_exam_field_meta():
     assert set(meta) == set(obs.known())
 
 
-def test_status_absent_is_zero_only_when_column_fully_read():
+def test_status_absence_remains_unknown_even_with_recognized_prefix():
     seen = {"statuses": [{"kind": "status", "key": "examcardplayaggressive", "value": 5, "score": 0.9}],
             "status": {"examcardplayaggressive": 5}}  # fmt: skip
-    assert (battle_observation(seen)["motivation"], battle_observation(seen)["impression"]) == (5, 0)
+    assert (battle_observation(seen)["motivation"], battle_observation(seen)["impression"]) == (5, None)
     unknown_slot = {**seen, "statuses": seen["statuses"] + [{"kind": "status", "key": None, "score": 0.4}]}
     assert battle_observation(unknown_slot)["impression"] is None
     assert battle_observation({"statuses": [], "status": {}})["motivation"] is None

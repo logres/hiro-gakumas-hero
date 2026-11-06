@@ -56,6 +56,11 @@ def _hud_int(img, box, kaa_box) -> int | None:
     实机（2026-10-31 选拔①）KAA 的 _read_int 在同一帧读出剩余回合 0、体力 None，识别层读出 10、33。"""
     from hiro.vision import hif
 
+    if box == hif.BOX_TURNS:
+        try:
+            return hif.read_remaining_turns(img)
+        except Exception:  # Unknown extra turns must not fall back to KAA's main dial.
+            return None
     try:
         v = hif._digits(img, box)
     except Exception:  # 识别异常不能打断考试

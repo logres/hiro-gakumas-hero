@@ -124,12 +124,13 @@ def battle_observation(exam: dict) -> dict:
         "buffs": {e.get("name") or e.get("key"): e.get("value") for e in exam.get("statuses") or []
                   if e.get("key") not in STATUS_FIELD and (e.get("name") or e.get("key"))},
     }  # fmt: skip
-    statuses = exam.get("statuses")
-    # 状态栏读到了槽位且每个蓝底槽都认出了图标：没有某个图标即该状态为 0（看到了「没有」，不是猜）
-    column_complete = bool(statuses) and all(e.get("key") for e in statuses if e.get("kind") == "status")
+    # A low-scoring final icon is indistinguishable from trailing background;
+    # even an entirely recognized prefix cannot prove the column complete.
+    # Only an observed value (including an explicitly inactive icon's zero)
+    # establishes a core status. Missing/occluded icons remain unknown.
     for key, fieldname in STATUS_FIELD.items():
         value = status.get(key, status.get(fieldname))  # 早期数据集的 status 直接用 motivation / impression 作键
-        obs[fieldname] = value if value is not None else (0 if column_complete else None)
+        obs[fieldname] = value
     return obs
 
 
@@ -437,8 +438,8 @@ def _hif_exam_confidence(raw: dict, fields: dict) -> dict[str, tuple[float | Non
         hit = next((e for e in statuses if e.get("key") == key), None)
         if hit is not None:
             out[name] = (hit.get("score"), None)
-        elif fields.get(name) == 0:
-            out[name] = (None, "状态栏各槽均已认出且无此图标")
+        elif fields.get(name) is None:
+            out[name] = (None, "状态图标未可靠识别；缺失不代表0")
     if statuses:
         out["buffs"] = (_min(e.get("score") for e in statuses if e.get("key") not in STATUS_FIELD), None)
     return out

@@ -1,4 +1,4 @@
-"""Bounded real-game input check: open menu, then close only an OCR-confirmed button.
+"""Bounded real-game input check: open menu, then close its OCR-confirmed X.
 
 Requires the game at home and a prior probe screenshot from that home screen.
 Never starts produce or accepts rewards. No automatic elevation.
@@ -8,6 +8,29 @@ import argparse
 import time
 from pathlib import Path
 from unittest.mock import patch
+
+
+def menu_close_box(boxes):
+    """Recognize the observed DMM icon grid, not a nonexistent menu heading."""
+    anchors = {'プロフィール': (115, 447), 'サークル': (606, 447),
+               '名簿': (115, 939), '設定': (606, 939)}
+    found = set()
+    close = []
+    for text, score, box in boxes:
+        if score < .8:
+            continue
+        text = text.replace(' ', '')
+        x1, y1, x2, y2 = box
+        cx, cy = (x1+x2)/2, (y1+y2)/2
+        if text in anchors:
+            ax, ay = anchors[text]
+            if abs(cx-ax) <= 70 and abs(cy-ay) <= 45:
+                found.add(text)
+        if (text in ('×', '✕', '✖') and 580 <= x1 < x2 <= 700
+                and 1160 <= y1 < y2 <= 1270
+                and 20 <= x2-x1 <= 120 and 20 <= y2-y1 <= 110):
+            close.append(box)
+    return close[0] if found == set(anchors) and len(close) == 1 else None
 
 
 def home_matches(frame, reference):
@@ -56,6 +79,7 @@ def traced_click(device, window, x, y, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=['windows_native','windows_sendinput'], default='windows_native')
+    parser.add_argument('--close-existing', action='store_true', help='Only close an already recognized menu, then verify home')
     args = parser.parse_args()
     import cv2
     import numpy as np
@@ -73,33 +97,31 @@ def main():
     try:
         before = device.screenshot()
         cv2.imwrite(str(root / 'menu-before-check.png'), before)
-        if not home_matches(before, reference):
-            raise RuntimeError('Selected Home tab/menu not confirmed; no input sent')
-        traced_click(device, window, 653, 1216, root / 'menu-input.json')
-        time.sleep(1)
+        if not args.close_existing:
+            if not home_matches(before, reference):
+                raise RuntimeError('Selected Home tab/menu not confirmed; no input sent')
+            traced_click(device, window, 653, 1216, root / 'menu-input.json')
+            time.sleep(1)
         opened = device.screenshot()
         cv2.imwrite(str(root / 'menu-open-check.png'), opened)
         boxes = ocr_boxes(opened, scale=1)
-        texts = [t.replace(' ', '') for t, _, _ in boxes]
         (root / 'menu-ocr.json').write_text(json.dumps(boxes, ensure_ascii=False, indent=2), encoding='utf-8')
-        if not any('メニュー' in t for t in texts):
-            raise RuntimeError('Menu not confirmed after one click; no retry or further input')
-        close = [(score, box) for text, score, box in boxes
-                 if text.replace(' ', '') == '閉じる' and score >= .8 and box[1] > 640]
-        if len(close) != 1:
-            raise RuntimeError('Menu opened, but no unique close button recognized; left open for manual close')
-        _, (x1, y1, x2, y2) = close[0]
+        close = menu_close_box(boxes)
+        if close is None:
+            raise RuntimeError('Menu grid and unique X not confirmed; no further input')
+        print('DMM menu grid and X confirmed', flush=True)
+        x1, y1, x2, y2 = close
         fresh = device.screenshot()
         if fresh.shape != opened.shape or float(np.abs(
                 fresh[y1:y2,x1:x2].astype(float)-opened[y1:y2,x1:x2].astype(float)).mean()) > 12:
             raise RuntimeError('Close button changed; left menu open without another click')
-        device.click((x1+x2)//2, (y1+y2)//2)
+        traced_click(device, window, (x1+x2)//2, (y1+y2)//2, root / 'menu-close-input.json')
         time.sleep(1)
         closed = device.screenshot()
         cv2.imwrite(str(root / 'menu-closed-check.png'), closed)
         if not home_matches(closed, reference):
             raise RuntimeError('Close click sent but return to home not confirmed')
-        print('DMM menu open/close PASSED: two bounded clicks, no produce or purchases')
+        print('DMM menu ' + ('close' if args.close_existing else 'open/close') + ' PASSED; no produce or purchases')
     finally:
         device.stop()
 

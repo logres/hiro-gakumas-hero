@@ -153,3 +153,20 @@ Python 进程的 GetCurrentPackageFullName 返回 15700（没有包身份）。�
 拒绝旧截图坐标、重新截图后按新尺寸换算，以及激活失败时停止设备。测试使用真实
 kotonebot 设备/缩放器与模拟原生窗口，不代替真实桌面点击验收。
 
+# Latest correction: DMM menu click succeeded (2026-11-06)
+
+The external administrator run with `windows_sendinput` did open the actual
+DMM home menu. The retained `menu-open-check.png` shows its icon grid and X;
+`menu-ocr.json` recognizes the corner items and `×` at [592,1182,677,1250]
+with confidence .910. The previous verifier wrongly required a `メニュー`
+heading and a `閉じる` button, neither present in this UI. Its reported failure
+was a verifier false negative, not evidence of failed SendInput injection.
+
+The check now requires four spatially separated menu anchors and one
+high-confidence X within the observed bottom-right region, then checks the
+fresh X crop before closing. `--close-existing` permits a single bounded close
+of the menu left open by the previous test. Regression checks cover this actual
+OCR layout, missing/ambiguous/low-confidence/wrong-position close controls.
+Focused Windows input/device/menu tests: 20 passed. Actual close verification
+remains pending; opening alone does not establish a complete game run.
+

@@ -1019,23 +1019,38 @@ def _plugin(kind: str):
     return plugins.get(kind)
 
 
-def _detail_state_facts(img):
+def _detail_state_facts(img, *, diagnostics=None):
     """Compare observed game facts, excluding OCR confidence and moving scenery."""
     from hiro.vision.hif import is_hif_exam, read_hif_exam
     from hiro.vision.observe import battle_observation
 
-    if not is_hif_exam(img):
+    verified = is_hif_exam(img)
+    if diagnostics is not None:
+        diagnostics.update(exam_screen_verified=verified, gate="exam_screen_unverified")
+    if not verified:
         return None
     raw = read_hif_exam(img, cache=None)
     facts = battle_observation(raw)
+    if diagnostics is not None:
+        diagnostics.update(gate="core_hud_unknown", readings={
+            **{k: facts.get(k) for k in ("remaining_turns", "hp", "genki")},
+            **{k: raw.get(k) for k in ("attr", "multiplier_pct", "multiplier_votes")}})
     if any(facts.get(k) is None for k in ("remaining_turns", "hp", "genki")):
         return None
     facts.update({k: raw.get(k) for k in ("attr", "multiplier_pct", "pitem_charges")})
     # A missing multiplier can become readable after closing the detail list.
     # Do not open from that incomplete baseline and then mistake the new
     # observation for a game-state change. Item charges may genuinely be hidden.
-    if facts["attr"] not in ("vocal", "dance", "visual") or facts["multiplier_pct"] is None:
+    if facts["attr"] not in ("vocal", "dance", "visual"):
+        if diagnostics is not None:
+            diagnostics["gate"] = "attribute_unknown"
         return None
+    if facts["multiplier_pct"] is None:
+        if diagnostics is not None:
+            diagnostics["gate"] = "multiplier_unknown"
+        return None
+    if diagnostics is not None:
+        diagnostics["gate"] = "verified"
     return facts
 
 
@@ -1062,16 +1077,21 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
             x1, y1, x2, y2 = DETAIL_REGION
             detail_images[evidence["slot"]] = image[y1:y2, x1:x2].copy()
 
-    facts = _detail_state_facts(frame.img)
+    baseline_diagnostics = {}
+    facts = _detail_state_facts(frame.img, diagnostics=baseline_diagnostics)
     if facts is None:
-        rec.log("exam_card_details_unavailable", reason="initial_state_unverified")
+        rec.log("exam_card_details_unavailable", image=frame.img, lossless=True,
+                pixel_sha256=image_sha256(frame.img), reason="initial_state_unverified",
+                diagnostics=baseline_diagnostics)
         return False  # Reobserve before any UI input or evidence-free decision.
     def same_state(image):
-        current = _detail_state_facts(image)
+        diagnostics = {}
+        current = _detail_state_facts(image, diagnostics=diagnostics)
         if current != facts:
             differences = {key: {"before": value, "after": current.get(key) if current else None}
                            for key, value in facts.items() if current is None or current.get(key) != value}
-            rec.log("exam_card_detail_state_changed", image=image, differences=differences,
+            rec.log("exam_card_detail_state_changed", image=image, lossless=True,
+                    pixel_sha256=image_sha256(image), diagnostics=diagnostics, differences=differences,
                     baseline_sha256=image_sha256(frame.img))
         return current == facts
     result = review_exam_hand_details(

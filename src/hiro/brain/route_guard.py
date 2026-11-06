@@ -183,6 +183,9 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
             return compare(decider, state, identity)
         return _enhance(state, identity)
     if page == "SELECT_DRINK":
+        from hiro.brain.mechanism_drink_replacement import choose as replace_drinks, enabled as replacement_enabled
+        if replacement_enabled() and state.page_fields.get("full") is True:
+            return replace_drinks(decider,state,identity,page=page,can_skip=kw.get("can_skip",True),n_options=kw.get("n_options"))
         from hiro.brain.route_drink_selection import choose, enabled
         if enabled():
             return choose(decider, state, identity, can_skip=kw.get("can_skip", True), n_options=kw.get("n_options"))
@@ -190,6 +193,13 @@ def guard(decider, page: str, state, **kw) -> Decision | None:
             return _decision(Action.exclude_card(0), "非やる気路线：饮料价值未适配，允许跳过时不拿", page, 0.3)
         return _wait(page, "非やる気路线：饮料必选但缺少适用评级，等待确认")
     if page == "PDRINK_MAX":
+        from hiro.brain.mechanism_drink_replacement import choose as replace_drinks, enabled as replacement_enabled
+        if replacement_enabled():
+            decision=replace_drinks(decider,state,identity,page=page)
+            args=decision.action.args
+            decider.overflow_skip=(decision.action.kind is ActionKind.DISCARD_DRINK
+                                  and args.get("receive") is False and not args.get("discard"))
+            return decision
         decider.overflow_skip = True
         return _decision(Action(ActionKind.DISCARD_DRINK, {"discard": [], "receive": False}),
                          "非やる気路线：饮料溢出时保留现有持有，不按旧表丢弃", page, 0.5)

@@ -164,6 +164,9 @@ def resolve_overflow(
     sleep: Callable[[float], None] = time.sleep,
     ocr=None,
     calib: bool = True,
+    verify_current=None,
+    strict_selection: bool = False,
+    incomings: list[dict] | None = None,
 ) -> ExecutionResult:
     """溢出页（PDRINK_MAX）：丢第 discard 瓶（可多瓶）已有饮料，留下新饮料，点「残す」，等离开溢出页。
     receive_indexes：要勾的新饮料（「受け取ったドリンク」区从上往下 0 起，决策 99fa922 febd374）；没给时勾最下面那瓶，还差再补勾。
@@ -172,6 +175,8 @@ def resolve_overflow(
             shoot or device.screenshot, click or device.click, clock, sleep, label="饮料溢出", ocr=ocr, calib=calib)  # fmt: skip
     img = r.shoot()
     r.snap(img, "open")
+    if verify_current is not None and not verify_current(img):
+        return r.result(False, "当前持有/新饮料身份变化，不修改勾选")
     boxes = r.ocr(img)
     header = find_text(boxes, OVERFLOW_HEADER)
     if header is None:
@@ -179,6 +184,8 @@ def resolve_overflow(
     cbs = checkboxes(img)
     new = [y for y, _ in cbs if y < header[1]]
     owned = [y for y, _ in cbs if y > header[1]]
+    if strict_selection and (len(owned) != len(held or []) or len(new) != len(incomings or [])):
+        return r.result(False, "勾选框数量与已核实完整列表不符，不修改勾选")
     if not new or not owned:  # 勾选框没找全（动画中？）：退回按行文字 / 识别给的行
         if held and incoming and incoming.get("center") and all(h.get("center") for h in held):
             new, owned = [int(incoming["center"][1])], [int(h["center"][1]) for h in held]
@@ -212,7 +219,7 @@ def resolve_overflow(
     # 补勾顺序：其余新饮料 → 没让丢的已有饮料 → 让丢的已有饮料（从后往前；决策给的数量对不上时宁可少丢一瓶，也要把新饮料留下）
     fill = ([(y, "其余新饮料") for y in new if y not in receives] + [(y, f"已有第 {i} 瓶") for i, y in enumerate(owned) if i not in discards]
             + [(owned[i], f"已有第 {i} 瓶（原定丢弃）") for i in reversed(discards)])  # fmt: skip
-    while left and fill:
+    while left and fill and not strict_selection:
         y, what = fill.pop(0)
         if checked(img, y):
             continue
@@ -224,6 +231,9 @@ def resolve_overflow(
         left = select_left(boxes)
     if left:
         return r.result(False, f"勾完后仍是「あと{left}個選択」，没有选满")
+    if strict_selection and (left is None or any(checked(img,y) != (i not in discards) for i,y in enumerate(owned))
+                             or any(checked(img,y) != (y in receives) for y in new)):
+        return r.result(False, "最终勾选不等于已批准组合，不提交残す")
     keep = find_text(boxes, KEEP_TEXT)
     if keep is None:
         return r.result(False, "没找到「残す」按钮")
@@ -260,7 +270,37 @@ def occupied(img: np.ndarray, slots: list[dict] | None = None) -> int:
     return sum(not slot_empty(img, bar_center(i, slots)) for i in range(len(BAR_X)))
 
 
-def discard_owned(r: Run, slot: int, slots: list[dict] | None = None) -> str | None:
+def _named_drink_identity(boxes,expected_id,*,confirmation=False):
+    """Require a unique exact master name inside the recognized modal body.
+
+    This deliberately rejects wrapped/unreadable names; effect similarity or a
+    generic dialog title cannot authorize a strict discard.
+    """
+    from hiro.vision.items import _drink_effects
+    heading=find_text(boxes,CONFIRM_TITLE if confirmation else DETAIL_TITLE)
+    button=find_text(boxes,CONFIRM_TEXTS,region=DIALOG_BUTTONS) if confirmation else find_text(boxes,DISCARD_TEXT)
+    if not heading or not button or heading[1]>=button[1] or not expected_id:
+        return False
+    texts=["".join(text.split()) for text,_,box in boxes
+           if box[1]>heading[1] and box[3]<button[1] and box[0]>=20 and box[2]<=700]
+    try:
+        names=_drink_effects()
+        found={did for did,(name,_) in names.items() if name and any(
+            "".join(name.split()) in text if confirmation else "".join(name.split())==text for text in texts)}
+    except Exception:
+        return False
+    return found=={expected_id}
+
+
+def wait_skip_result(action,*,shoot=None,ocr=None,clock=time.monotonic,sleep=time.sleep,timeout=LEAVE_TIMEOUT):
+    """Observe the expected reward-skip confirmation; never press or retry it."""
+    r=Run(action,"SELECT_DRINK",shoot or device.screenshot,lambda *args:None,clock,sleep,ocr=ocr)
+    found,_=r.until_text(SKIP_TITLE,timeout)
+    return r.result(found is not None,None if found is not None else "未观察到報酬スキップ确认，不报告跳过成功",
+                    page_after="PDRINK_MAX_CONFIRM" if found is not None else "same")
+
+
+def discard_owned(r: Run, slot: int, slots: list[dict] | None = None, *, strict: bool = False) -> str | None:
     """点饮料栏第 slot 格 →「Pドリンク詳細」→「捨てる」→「廃棄確認」点「はい」→ 非空格数减 1。返回错误说明，成功 None。
 
     游戏丢掉一瓶后会把剩下的往左挤，空出来的是最右边那格，不是被丢的那格（q8-r1 calib 20261101-050220：丢第 1 格，
@@ -278,7 +318,7 @@ def discard_owned(r: Run, slot: int, slots: list[dict] | None = None) -> str | N
     before = occupied(img, slots)
     r.tap(center)
     pos, img = r.until_text(DISCARD_TEXT + DETAIL_TITLE, DETAIL_TIMEOUT)
-    if pos is None and r.real_click is not None and not slot_empty(img, center):
+    if pos is None and not strict and r.real_click is not None and not slot_empty(img, center):
         logger.warning("%s：点饮料栏第 %d 格后 %.0fs 没出详情框，改用真实鼠标再点", r.label, slot, DETAIL_TIMEOUT)
         try:
             r.real_click(*center)
@@ -289,24 +329,38 @@ def discard_owned(r: Run, slot: int, slots: list[dict] | None = None) -> str | N
     r.snap(img, "drink-detail")
     if pos is None:
         return f"点饮料栏第 {slot} 格后 {DETAIL_TIMEOUT:.0f}s 内没出现「Pドリンク詳細」"
-    discard_at = find_text(r.ocr(img), DISCARD_TEXT) or DISCARD_TAP
+    detail_boxes=r.ocr(img)
+    expected_id=slots[slot].get("drink_id") if slots and 0<=slot<len(slots) else None
+    if strict and not _named_drink_identity(detail_boxes,expected_id):
+        return "详情饮料名称无法与批准丢弃的准确身份一致核实，不丢弃"
+    discard_at = find_text(detail_boxes, DISCARD_TEXT) or DISCARD_TAP
 
     def confirm_up(im):
         b = r.ocr(im)
         return find_text(b, CONFIRM_TITLE) is not None or find_text(b, CONFIRM_TEXTS, region=DIALOG_BUTTONS) is not None \
             or find_text(b, DETAIL_TITLE) is None
 
-    ok, img = r.tap_confirmed(discard_at, confirm_up, STEP_TIMEOUT, what="捨てる")
+    if strict:
+        r.tap(discard_at)
+        ok,img=r.until(confirm_up,STEP_TIMEOUT)
+    else:
+        ok, img = r.tap_confirmed(discard_at, confirm_up, STEP_TIMEOUT, what="捨てる")
     if not ok:
         return f"点「捨てる」后 {STEP_TIMEOUT:.0f}s 没出「廃棄確認」（真实鼠标也试过：{r.real_taps > 0}）"
     b = r.ocr(img)
     if (yes := find_text(b, CONFIRM_TEXTS, region=DIALOG_BUTTONS)) is not None:
+        if strict and not _named_drink_identity(b,expected_id,confirmation=True):
+            return "廃棄確認中的饮料身份未知或不符，不确认丢弃"
         r.snap(img, "discard-confirm")
 
         def closed(im):
             return find_text(r.ocr(im), DETAIL_TITLE + CONFIRM_TITLE) is None
 
-        ok, img = r.tap_confirmed(yes, closed, STEP_TIMEOUT, what="はい")
+        if strict:
+            r.tap(yes)
+            ok,img=r.until(closed,STEP_TIMEOUT)
+        else:
+            ok, img = r.tap_confirmed(yes, closed, STEP_TIMEOUT, what="はい")
         if not ok:
             return f"点「廃棄確認」的「はい」后 {STEP_TIMEOUT:.0f}s 弹窗没关"
 
@@ -319,7 +373,7 @@ def discard_owned(r: Run, slot: int, slots: list[dict] | None = None) -> str | N
         # （main13 第 7 天：已剩 3 瓶，occupied 仍读 4，误判失败停机；calib 20261102-032839-饮料替换/04）
         if dialogs_gone and (confirmed[0] or occupied(im, slots) == before - 1):
             return True
-        if btn := find_text(b, CONFIRM_TEXTS, region=DIALOG_BUTTONS):
+        if not strict and (btn := find_text(b, CONFIRM_TEXTS, region=DIALOG_BUTTONS)):
             r.snap(im, "discard-confirm")
             r.tap(btn)
             confirmed[0] = True
@@ -342,6 +396,10 @@ def swap_receive(
     sleep: Callable[[float], None] = time.sleep,
     ocr=None,
     calib: bool = True,
+    verify_current=None,
+    strict: bool = False,
+    verify_received=None,
+    verify_discarded=None,
 ) -> ExecutionResult:
     """差し入れ三选一（SELECT_DRINK）饮料满时：丢饮料栏第 discard 瓶，再拿第 pick 个候选。slots：read_drink_slots 的结果（用其 center）。"""
     r = Run(action or Action.activate_effect(pick), "SELECT_DRINK", shoot or device.screenshot, click or device.click, clock, sleep,
@@ -350,11 +408,20 @@ def swap_receive(
         from hiro import real_click
 
         r.real_click = real_click.click
-    r.snap(r.shoot(), "open")
+    first=r.shoot()
+    r.snap(first, "open")
+    if verify_current is not None and not verify_current(first):
+        return r.result(False,"当前持有/候选饮料身份变化，不丢弃")
+    if strict and (verify_received is None or verify_discarded is None):
+        return r.result(False,"缺少实际丢弃/领取结果核验，不丢弃")
     if not 0 <= pick < len(OFFER_CENTERS):
         return r.result(False, f"没有第 {pick} 个候选饮料")
-    if err := discard_owned(r, discard, slots):
+    if err := discard_owned(r, discard, slots, **({"strict":True} if strict else {})):
         return r.result(False, err)
+    if strict:
+        ok,_=r.until(verify_discarded,DISCARD_TIMEOUT)
+        if not ok:
+            return r.result(False,"丢弃结果未核实，不领取或重放；可能已部分执行")
     img = r.shoot()
     base_val = button_sv(img, RECEIVE_BTN)[1]
     r.tap(OFFER_CENTERS[pick])
@@ -376,12 +443,17 @@ def swap_receive(
     before_receive = img
 
     def left(im):
-        return _roi_changed(before_receive, im, RECEIVE_BTN)
+        return bool(verify_received(im)) if strict else _roi_changed(before_receive, im, RECEIVE_BTN)
 
-    ok, img = r.tap_confirmed(RECEIVE_TAP, left, LEAVE_TIMEOUT, what="受け取る")
+    if strict:
+        r.tap(RECEIVE_TAP)
+        ok,img=r.until(left,LEAVE_TIMEOUT)
+    else:
+        ok, img = r.tap_confirmed(RECEIVE_TAP, left, LEAVE_TIMEOUT, what="受け取る")
     r.snap(img, "after-receive")
     if not ok:
-        return r.result(False, f"点「受け取る」后 {LEAVE_TIMEOUT:.0f}s 画面没变")
+        return r.result(False, "旧饮料已丢弃，未核实新饮料实际入栏；停止，不能重放" if strict
+                        else f"点「受け取る」后 {LEAVE_TIMEOUT:.0f}s 画面没变")
     logger.info("饮料替换：丢第 %d 瓶，收第 %d 个候选（%.1fs）", discard, pick, r.clock() - r.t0)
     return r.result(True, page_after=None)
 
@@ -398,6 +470,10 @@ def discard_then_receive(
     sleep: Callable[[float], None] = time.sleep,
     ocr=None,
     calib: bool = True,
+    verify_current=None,
+    strict: bool = False,
+    verify_received=None,
+    verify_discarded=None,
 ) -> ExecutionResult:
     """差し入れ / 活動支給 的饮料三选一，饮料满（「Pドリンク所持上限」、「受け取る」灰）时：丢底栏第 held_index 瓶，收第 pick_slot 个候选。
 
@@ -419,4 +495,6 @@ def discard_then_receive(
             slots[h["index"]] = {"slot": h["index"], "state": "drink", "center": list(h["center"]), "drink_id": h.get("drink_id")}
     logger.info("饮料替换：丢底栏第 %d 瓶「%s」，收第 %d 个候选", held_index, entry.get("name"), pick_slot)
     return swap_receive(pick_slot, held_index, slots=slots, action=act, shoot=shoot, click=click, clock=clock, sleep=sleep,
-                        ocr=ocr, calib=calib)  # fmt: skip
+                        ocr=ocr, calib=calib, **({"verify_current":verify_current,"strict":strict,"verify_received":verify_received,
+                                                 "verify_discarded":verify_discarded}
+                                               if verify_current is not None or strict else {}))  # fmt: skip

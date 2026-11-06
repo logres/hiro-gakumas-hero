@@ -548,13 +548,16 @@ class HiroHifStrategy(HifGrindStrategy):
 
     DRINK_FULL_SOURCES = ("rule", "sim")
 
-    def _drink_full_skip(self) -> bool:
+    def _drink_full_skip(self, ctx=None) -> bool:
         """饮料已满（「Pドリンク所持上限」，「受け取る」不可点）：勾「受け取らない」再按按钮。返回是否走了这条路。"""
         boxes = ocr.ocr()
         if not any("所持上限" in t.text for t in boxes):
             return False
         t0 = time.monotonic()
         obs = self.s.observe(scene="SELECT_DRINK")
+        from hiro.brain.mechanism_drink_replacement import enabled as replacement_enabled
+        if replacement_enabled() and not self.deciders._uses_yaruki_policy(self.s.state):
+            return self._mechanism_drink_full(ctx,obs)
         # 用户规则（2026-11-01）：饮料满不能默认放弃新饮料，要走换饮料决策。新饮料不比持有的强 → 决策不收（勾受け取らない）；
         # 新饮料更好 → 需要先在底栏丢一瓶再领取，这一步还没有执行器 → 停下；持有 / 新饮料认不出 → 停下
         from dataclasses import replace as dc_replace
@@ -596,6 +599,61 @@ class HiroHifStrategy(HifGrindStrategy):
         self.s.record(obs, decision=d, execution=result)
         self._skip_incoming_drink = True  # 随后的「報酬スキップ」确认是这一步的结果，由 on_pdrink_max_confirm 放行
         logger.info("选饮料：已满，勾「受け取らない」跳过")
+        return True
+
+    def _drink_identity_gate(self,page,expected):
+        """Re-read the actual executor frame, never reuse a previous observation."""
+        from hiro.brain.mechanism_drink_replacement import same_drink_identities
+        def verify(image):
+            observed=self.s.observe(scene=page,img=image)
+            return same_drink_identities(expected,observed.fields,page=page)
+        return verify
+
+    def _mechanism_drink_full(self,ctx,obs):
+        from copy import deepcopy
+        from hiro.produce.drink_swap import discard_then_receive,wait_skip_result
+        if ctx is None:
+            self._stop("SELECT_DRINK","满栏替换缺少当前跳过权限",obs=obs)
+        data=ctx.fetch_select_drink()
+        can_skip=getattr(data,"can_skip",None)
+        d=self.deciders.decide("SELECT_DRINK",self.s.state,can_skip=can_skip,n_options=len(data.drinks))
+        if d.action.kind is not ActionKind.DISCARD_DRINK or d.action.args.get("mechanism_replacement") is not True:
+            self._stop("SELECT_DRINK","满栏机制比较未产生已核实动作："+d.reason,obs=obs,decision=d)
+        expected=deepcopy(self.s.state.page_fields)
+        verify=self._drink_identity_gate("SELECT_DRINK",expected)
+        args=d.action.args
+        self._skip_incoming_drink=False
+        if args.get("receive"):
+            from collections import Counter
+            from hiro.vision.items import read_held_drinks
+            after_discard=Counter(h["drink_id"] for h in expected["held"] if h["index"] not in args["discard"])
+            after_receive=after_discard.copy()
+            after_receive[expected["candidates"][args["pick_index"]]["drink_id"]]+=1
+            def holding_matches(wanted):
+                def check(image):
+                    actual=read_held_drinks(image).get("held")
+                    return (isinstance(actual,list) and all(h.get("drink_id") for h in actual)
+                            and Counter(h["drink_id"] for h in actual)==wanted)
+                return check
+            try:
+                result=discard_then_receive(args["discard"][0],args["pick_index"],held=expected["held"],
+                    action=d.action,verify_current=verify,verify_received=holding_matches(after_receive),
+                    verify_discarded=holding_matches(after_discard),strict=True)
+            except Exception as exc:
+                result=ExecutionResult(d.action,False,error="替换结果不确定，不重试："+type(exc).__name__)
+        else:
+            if can_skip is not True or not verify(device.screenshot()):
+                self._stop("SELECT_DRINK","放弃新饮料前身份或跳过权限变化",obs=obs,decision=d)
+            # Use the actual page's skip path; only this explicit keep authorizes it.
+            try:
+                ctx.commit(data,None)
+                result=wait_skip_result(d.action)
+                self._skip_incoming_drink=result.ok
+            except Exception as exc:
+                result=ExecutionResult(d.action,False,error="跳过结果不确定："+type(exc).__name__)
+        self.s.record(obs,decision=d,execution=result)
+        if not result.ok:
+            self._stop("SELECT_DRINK","替换可能已丢弃旧饮料，停止而不重放："+str(result.error),decision=d)
         return True
 
     UNAVAILABLE_OPTIONS = ()  # 特別指導 已接入（识别 26675e4 + 执行 c9ede96，hif._special_guidance）
@@ -711,6 +769,28 @@ class HiroHifStrategy(HifGrindStrategy):
         t0 = time.monotonic()
         obs = self.s.observe(scene="PDRINK_MAX")
         d = self.deciders.decide("PDRINK_MAX", self.s.state)
+        from hiro.brain.mechanism_drink_replacement import enabled as replacement_enabled
+        mechanism_route=replacement_enabled() and not self.deciders._uses_yaruki_policy(self.s.state)
+        if mechanism_route and d.action.args.get("mechanism_replacement") is not True:
+            self._stop("PDRINK_MAX","通用饮料组合未确认，不自动放弃或重试："+d.reason,obs=obs,decision=d)
+        if mechanism_route and not d.action.args.get("receive"):
+            from copy import deepcopy
+            if not self._drink_identity_gate("PDRINK_MAX",deepcopy(self.s.state.page_fields))(device.screenshot()):
+                self._stop("PDRINK_MAX","保留旧饮料前身份变化，不放弃新饮料",obs=obs,decision=d)
+        if d.action.args.get("mechanism_replacement") is True and d.action.args.get("receive"):
+            from copy import deepcopy
+            pf=deepcopy(self.s.state.page_fields)
+            args=d.action.args
+            try:
+                result=resolve_overflow(args["discard"],receive_indexes=args["receive_indexes"],action=d.action,
+                    held=pf.get("held"),incoming=pf.get("incoming"),incomings=pf.get("incomings"),
+                    strict_selection=True,verify_current=self._drink_identity_gate("PDRINK_MAX",pf))
+            except Exception as exc:
+                result=ExecutionResult(d.action,False,error="溢出提交结果不确定："+type(exc).__name__)
+            self.s.record(obs,decision=d,execution=result)
+            if not result.ok:
+                self._stop("PDRINK_MAX","通用饮料替换未完成，不自动重试或放弃新饮料："+str(result.error),obs=obs,decision=d)
+            return
         for _ in range(self.PDRINK_DECIDE_RETRIES):
             # 只有明确的 DiscardDrink（换 / 不换）才往下走。决策器异常会兜底成 Wait（第十八局 20:23:29：None 崩溃 → Wait → 落到 KAA 默认
             # 点 Leave，新饮料被跳过）：重新观测、重新决策，仍不行就停机，不交给 KAA
@@ -770,7 +850,8 @@ class HiroHifStrategy(HifGrindStrategy):
         self.s.note(f"PDRINK_MAX：已有饮料只看得到前 {visible_rows} 行，其余标为点不到")
 
     def on_select_drink(self, ctx: "DrinkSelectContext"):
-        if self._drink_full_skip():
+        from hiro.brain.mechanism_drink_replacement import enabled as replacement_enabled
+        if (self._drink_full_skip(ctx) if replacement_enabled() else self._drink_full_skip()):
             return
         t0 = time.monotonic()
         data = ctx.fetch_select_drink()

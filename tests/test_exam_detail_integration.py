@@ -22,7 +22,7 @@ def test_detail_inspection_restoration_gates_decision_context(monkeypatch, resto
     events = []
     rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
     globals_ = exam._review_current_card_details.__globals__
-    monkeypatch.setitem(globals_, "_detail_state_facts", lambda img: {"hp": 20})
+    monkeypatch.setitem(globals_, "_detail_state_facts", lambda img, **kw: {"hp": 20})
     monkeypatch.setitem(globals_, "device", SimpleNamespace(screenshot=lambda: image, click=lambda p: None))
     monkeypatch.setattr(review, "review_exam_hand_details", lambda *a, **kw:
                         review.ReviewResult(evidence, image, [], restored))
@@ -47,11 +47,13 @@ def test_incomplete_baseline_reobserves_without_opening_or_deciding(monkeypatch)
     state = SimpleNamespace(hand=[], public_info="catalog", legal_actions=lambda: ["drink:0", "skip"])
     events = []
     rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
-    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _: None)
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _, **kw: None)
     monkeypatch.setattr(review, "review_exam_hand_details", lambda *a, **kw: pytest.fail("must not open details"))
-    assert exam._review_current_card_details(state, SimpleNamespace(img=object()), rec) is False
+    assert exam._review_current_card_details(state, SimpleNamespace(img=np.zeros((2,2,3), dtype=np.uint8)), rec) is False
     assert state.public_info == "catalog"
     assert events[-1][1]["reason"] == "initial_state_unverified"
+    assert events[-1][1]["lossless"] is True
+    assert events[-1][1]["pixel_sha256"] == review.image_sha256(events[-1][1]["image"])
 
 
 @pytest.mark.parametrize("attr,multiplier,complete", [("visual", None, False), (None, 2868, False), ("visual", 2868, True)])
@@ -73,7 +75,7 @@ def test_changed_initial_facts_request_reobservation_without_context(monkeypatch
     events = []
     rec = SimpleNamespace(log=lambda kind, **kwargs: events.append((kind, kwargs)))
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts",
-                        lambda _: {"hp": 20})
+                        lambda _, **kw: {"hp": 20})
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "device",
                         SimpleNamespace(screenshot=lambda: image, click=lambda _: None))
     monkeypatch.setattr(review, "review_exam_hand_details", lambda *a, **kw:
@@ -134,7 +136,7 @@ def test_vision_runs_only_for_customized_card_after_restoration(monkeypatch, cus
         return {"status": "unavailable", "reason": "test_no_model"}
     monkeypatch.setattr(review, "review_exam_hand_details", inspect)
     monkeypatch.setattr(card_detail_transcription, "transcribe_card_detail", transcribe)
-    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _: {"hp": 20})
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", lambda _, **kw: {"hp": 20})
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "device",
                         SimpleNamespace(screenshot=lambda: image, click=lambda _: None))
     rec = SimpleNamespace(log=lambda kind, **kw: events.append(kind))
@@ -144,3 +146,57 @@ def test_vision_runs_only_for_customized_card_after_restoration(monkeypatch, cus
     assert "追加1" in state.public_info  # Failure keeps original evidence.
     if customized:
         assert events.index("exam_card_detail_review") < events.index("exam_card_detail_transcription")
+
+
+@pytest.mark.parametrize("screen,missing,attr,multiplier,gate", [
+    (False, None, "dance", 1719, "exam_screen_unverified"),
+    (True, "remaining_turns", "dance", 1719, "core_hud_unknown"),
+    (True, "hp", "dance", 1719, "core_hud_unknown"),
+    (True, "genki", "dance", 1719, "core_hud_unknown"),
+    (True, None, None, 1719, "attribute_unknown"),
+    (True, None, "dance", None, "multiplier_unknown"),
+    (True, None, "dance", 1719, "verified")])
+def test_state_gate_diagnostics_preserve_rejection_decisions(monkeypatch, screen, missing, attr, multiplier, gate):
+    from hiro.vision import hif, observe
+    reads = []
+    raw = {"attr": attr, "multiplier_pct": multiplier, "multiplier_votes": [1719,1719]}
+    facts = {"remaining_turns": 6, "hp":32, "genki":9}
+    if missing:
+        facts[missing] = None
+    monkeypatch.setattr(hif, "is_hif_exam", lambda _: screen)
+    monkeypatch.setattr(hif, "read_hif_exam", lambda *a, **kw: reads.append(True) or raw)
+    monkeypatch.setattr(observe, "battle_observation", lambda _: dict(facts))
+    diagnostic = {}
+    result = exam._detail_state_facts(object(), diagnostics=diagnostic)
+    assert (result is not None) is (gate == "verified")
+    assert diagnostic["gate"] == gate
+    assert diagnostic["exam_screen_verified"] is screen
+    if screen:
+        assert diagnostic["readings"] == {**facts, **raw}
+    else:
+        assert reads == []  # No full reader is run on an unverified page.
+
+
+def test_state_changed_preserves_lossless_current_image_and_failed_gate(monkeypatch):
+    monkeypatch.setenv("HIRO_EXAM_CARD_DETAILS", "1")
+    initial, fresh = np.zeros((2,2,3), np.uint8), np.ones((2,2,3), np.uint8)
+    state = SimpleNamespace(hand=[], public_info="catalog", legal_actions=lambda:["drink:0","skip"])
+    events = []
+    def facts(image, *, diagnostics=None):
+        diagnostics.update(gate="verified" if image is initial else "multiplier_unknown")
+        return {"hp":32} if image is initial else None
+    def inspect(*args, **kwargs):
+        assert kwargs["same_state"](fresh) is False
+        return review.ReviewResult([], fresh, ["initial_state_unverified"], False)
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", facts)
+    monkeypatch.setitem(exam._review_current_card_details.__globals__, "device",
+                        SimpleNamespace(screenshot=lambda:fresh,click=lambda _:pytest.fail("no clicks")))
+    monkeypatch.setattr(review,"review_exam_hand_details",inspect)
+    assert exam._review_current_card_details(state, SimpleNamespace(img=initial),
+        SimpleNamespace(log=lambda kind, **kw:events.append((kind,kw)))) is False
+    kind, event = events[0]
+    assert kind == "exam_card_detail_state_changed"
+    assert event["image"] is fresh and event["lossless"] is True
+    assert event["pixel_sha256"] == review.image_sha256(fresh)
+    assert event["baseline_sha256"] == review.image_sha256(initial)
+    assert event["diagnostics"]["gate"] == "multiplier_unknown"

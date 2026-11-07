@@ -344,12 +344,20 @@ def _verified_status_number(img: MatLike, k: int) -> int | None:
     for crop in (img[y1:y2, x1:x2], img[cy - 2:cy + 34, SLOT_X + 14:SLOT_X + 130]):
         lines = ocr(crop, scale=1.0)
         if len(lines) != 1:
+            if len(lines) > 1 and glyph is not None:
+                # A literal percent may be split from the leading digits.
+                # Join only observed adjacent boxes on the same baseline;
+                # do not repair OCR characters or strip a guessed final digit.
+                labels = _label_candidates(ocr_boxes(crop,scale=1.0),r"[0-9]+[%％]",anchored=True)
+                values = {int(label[:-1]) for label in labels}
+                if len(values) == 1 and glyph in values:
+                    return glyph
             continue
         text, confidence = lines[0]
         match = re.fullmatch(r"([0-9]+)[%％]?", text.strip())
         if confidence >= 0.9 and match is not None:
             native = int(match[1])
-            if native == padded:
+            if native == padded and (glyph is None or glyph == native):
                 return native
             # ddddocr may incorporate the percent glyph as a final 9. Require
             # a literal observed percent AND independent exact digit glyphs.
@@ -385,11 +393,11 @@ def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple
     return value, _unit_label(img, k)
 
 
-def _duration_candidates(boxes):
+def _label_candidates(boxes, pattern, *, anchored=False):
     """Join only adjacent, overlapping-baseline boxes; never repair letters."""
     candidates = set()
     ordered = sorted(boxes, key=lambda line:line[2][0])
-    for start in range(len(ordered)):
+    for start in (range(min(1,len(ordered))) if anchored else range(len(ordered))):
         text = ""
         previous = None
         confidence_sum = 0.0
@@ -413,7 +421,7 @@ def _duration_candidates(boxes):
             character_count += len(piece)
             pieces += 1
             previous = box
-            match = re.fullmatch(r"([0-9]+)(ターン|回)",text)
+            match = re.fullmatch(pattern,text)
             # A complete OCR string keeps the original 0.9 requirement.
             # Fragment joins require every piece >=0.6 and >=0.89 by actual
             # character count, plus independent number and card-art agreement
@@ -421,8 +429,14 @@ def _duration_candidates(boxes):
             trustworthy = (confidence >= 0.9 if pieces == 1 else
                            confidence_sum / character_count >= 0.89)
             if match and trustworthy:
-                candidates.add((int(match[1]),match[2]))
+                candidates.add(text)
     return candidates
+
+
+def _duration_candidates(boxes):
+    labels = _label_candidates(boxes,r"[0-9]+(?:ターン|回)")
+    return {(int(match[1]),match[2]) for label in labels
+            if (match := re.fullmatch(r"([0-9]+)(ターン|回)",label))}
 
 
 def _permanent_enchant_signature(variants):
@@ -525,6 +539,12 @@ def read_status_column(img: MatLike, *, cache: RegionCache | None = None) -> lis
     out = []
     for k in range(occupied[-1] + 1):
         if scores[k] < DIAMOND_MIN:
+            if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1":
+                recovered = _trailing_enchant(img,k)
+                if recovered is not None:
+                    recovered["outline_score"] = round(scores[k],3)
+                    out.append(recovered)
+                    continue
             out.append({"slot": k, "kind": "status", "key": None,
                         "value": None, "score": round(scores[k], 3),
                         "uncertain": "slot_outline"})

@@ -448,3 +448,70 @@ def test_missing_duration_does_not_prove_permanence_or_overwrite_positive_value(
     monkeypatch.setattr(status,"ocr_boxes",lambda *args,**kw:[])
     result=status._trailing_enchant(np.zeros((1280,720,3),np.uint8),7)
     assert bool(result) is accepted
+
+
+def test_two_ocr_engines_cannot_overrule_conflicting_complete_digit_glyph(monkeypatch):
+    monkeypatch.setattr(status,"_font_digits_without_ring",lambda *_:5)
+    monkeypatch.setattr(status,"read_dddd",lambda *_:57)
+    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[("57",.99)])
+    assert status._verified_status_number(np.zeros((1280,720,3),np.uint8),4) is None
+
+
+@pytest.mark.parametrize("enabled,verified",[(True,True),(True,False),(False,True)])
+def test_internal_outline_hole_requires_same_strict_art_evidence_as_trailing_slot(monkeypatch,enabled,verified):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1" if enabled else "0")
+    monkeypatch.setattr(status,"diamond_score",lambda img,k:.8 if k==1 else (1. if k<3 else 0.))
+    monkeypatch.setattr(status,"_read_slot",lambda img,k:{"slot":k,"kind":"status","key":"known","value":1})
+    def evidence(img,k):
+        return {"slot":k,"kind":"enchant","card_id":"source","value":None,"unit":None,
+                "occupancy_basis":"card_art_and_master_permanent_candidate"} if k==1 and verified else None
+    monkeypatch.setattr(status,"_trailing_enchant",evidence)
+    rows=status.read_status_column(np.zeros((1280,720,3),np.uint8))
+    assert (rows[1].get("card_id")=="source") is (enabled and verified)
+    if not (enabled and verified):assert rows[1]["uncertain"]=="slot_outline"
+
+
+def test_local_r30_pair_rejects_background_57_and_recovers_internal_fancy_only(monkeypatch):
+    base=Path(__file__).resolve().parents[1]/"reports/runs/20261107-082327/frames"
+    if not (base/"00085-exam_card_detail_state_changed.png").exists():
+        pytest.skip("local lossless evidence not present")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    after=status.read_status_column(cv2.imread(str(base/"00085-exam_card_detail_state_changed.png")),cache=None)
+    before=status.read_status_column(cv2.imread(str(base/"00086-exam_card_detail_baseline.png")),cache=None)
+    assert observed(after)["motivation"] is None  # Correction, not a claimed recovery to 5.
+    assert observed(before)["motivation"]==5
+    assert after[2]["card_id"]==before[2]["card_id"]=="p_card-02-men-2_058"
+    assert after[2]["value"] is None
+    assert after[6]["name"]=="夢色リップ" and after[6]["value"]==3
+    assert not any(row.get("name")=="夢色リップ" for row in before)  # Missing unit remains unsupported.
+
+
+@pytest.mark.parametrize("boxes,glyph,expected",[
+    ([("2",.99,(0,0,20,30)),("0％",.99,(18,0,58,30))],20,20),
+    ([("2",.99,(0,0,20,30)),("0％",.99,(18,40,58,70))],20,None),
+    ([("2",.99,(0,0,20,30)),("9％",.99,(18,0,58,30))],20,None),
+    ([("2",.5,(0,0,20,30)),("0％",.99,(18,0,58,30))],20,None)])
+def test_split_percent_requires_literal_same_baseline_text_and_independent_digits(monkeypatch,boxes,glyph,expected):
+    monkeypatch.setattr(status,"_font_digits_without_ring",lambda *_:glyph)
+    monkeypatch.setattr(status,"read_dddd",lambda *_:209)
+    monkeypatch.setattr(status,"ocr",lambda *args,**kw:[(text,confidence) for text,confidence,_ in boxes])
+    monkeypatch.setattr(status,"ocr_boxes",lambda *args,**kw:boxes)
+    assert status._verified_status_number(np.zeros((1280,720,3),np.uint8),5)==expected
+
+
+def test_local_r30_static_holdout_reads_current_values_and_both_card_sources(monkeypatch):
+    folder=Path(__file__).resolve().parents[1]/"reports/windows-probe/r30-t5-static"
+    paths=[folder/f"frame-{i}.png" for i in range(3)]
+    if not all(path.exists() for path in paths):
+        pytest.skip("private holdout evidence absent")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    for path in paths:
+        rows=status.read_status_column(cv2.imread(str(path)),cache=None)
+        values=status.status_summary(rows)
+        assert values["examreview"]==43
+        assert values["examcardplayaggressive"]==5
+        assert values["examlessonvaluemultiple"]==20
+        assert any(row.get("card_id")=="p_card-02-men-2_058" for row in rows)
+        assert any(row.get("card_id")=="p_card-02-men-3_040" and row["value"]==3 for row in rows)

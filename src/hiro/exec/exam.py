@@ -1085,7 +1085,9 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
                 pixel_sha256=image_sha256(frame.img), reason="initial_state_unverified",
                 diagnostics=baseline_diagnostics)
         return False  # Reobserve before any UI input or evidence-free decision.
+    baseline_recorded = False
     def same_state(image):
+        nonlocal baseline_recorded
         diagnostics = {}
         current = _detail_state_facts(image, diagnostics=diagnostics)
         if current != facts:
@@ -1094,6 +1096,11 @@ def _review_current_card_details(state, frame, rec, *, llm=None, produce=None):
             rec.log("exam_card_detail_state_changed", image=image, lossless=True,
                     pixel_sha256=image_sha256(image), diagnostics=diagnostics, differences=differences,
                     baseline_sha256=image_sha256(frame.img))
+            if not baseline_recorded:
+                rec.log("exam_card_detail_baseline", image=frame.img, lossless=True,
+                        pixel_sha256=image_sha256(frame.img), facts=facts,
+                        diagnostics=baseline_diagnostics)
+                baseline_recorded = True
         return current == facts
     pile_snapshot = None
     pile_image = None

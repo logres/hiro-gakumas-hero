@@ -187,6 +187,7 @@ def test_state_changed_preserves_lossless_current_image_and_failed_gate(monkeypa
         return {"hp":32} if image is initial else None
     def inspect(*args, **kwargs):
         assert kwargs["same_state"](fresh) is False
+        assert kwargs["same_state"](fresh) is False
         return review.ReviewResult([], fresh, ["initial_state_unverified"], False)
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "_detail_state_facts", facts)
     monkeypatch.setitem(exam._review_current_card_details.__globals__, "device",
@@ -200,6 +201,11 @@ def test_state_changed_preserves_lossless_current_image_and_failed_gate(monkeypa
     assert event["pixel_sha256"] == review.image_sha256(fresh)
     assert event["baseline_sha256"] == review.image_sha256(initial)
     assert event["diagnostics"]["gate"] == "multiplier_unknown"
+    baselines = [data for kind, data in events if kind == "exam_card_detail_baseline"]
+    assert len(baselines) == 1
+    assert baselines[0]["image"] is initial and baselines[0]["lossless"] is True
+    assert baselines[0]["pixel_sha256"] == event["baseline_sha256"]
+    assert baselines[0]["facts"] == {"hp": 32}
 
 
 @pytest.mark.synthetic

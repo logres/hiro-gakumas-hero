@@ -156,6 +156,11 @@ class ScreenExamStateSource:
             if self.profile is None:
                 from hiro.brain.strategy_references import select_references
                 state.strategy_references = select_references(identity, state.exam)
+        from hiro.brain import active_card_context
+        if active_card_context.enabled():
+            active=active_card_context.observed_active_card_context(raw.get("statuses") if isinstance(raw,dict) else None)
+            state.public_info="\n".join(p for p in (state.public_info,
+                active_card_context.PREFIX+json.dumps(active,ensure_ascii=False)) if p)
         return state, "screen"
 
     def confidence(self) -> str:

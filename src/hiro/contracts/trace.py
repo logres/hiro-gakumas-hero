@@ -52,7 +52,8 @@ class Step(Contract):
 
 
 EXAM_REPLAY_FLAGS = ("HIRO_EXPLICIT_IDOL_STATE", "HIRO_EXAM_STRATEGY_REFERENCES", "HIRO_FINAL_TURN_SETUP",
-                     "HIRO_FALLBACK_DRINKS", "HIRO_PLAN_EFFECT_REVALIDATION", "HIRO_FALLBACK_EFFECT_SCORING")
+                     "HIRO_FALLBACK_DRINKS", "HIRO_PLAN_EFFECT_REVALIDATION", "HIRO_FALLBACK_EFFECT_SCORING",
+                     "HIRO_ACTIVE_CARD_EFFECT_CONTEXT")
 
 
 def freeze_exam_decision_input(state, memory, legal, previews, *, advisor, source, idol_card_id):

@@ -175,6 +175,7 @@ def test_trailing_slot_needs_high_card_match_and_explicit_positive_duration(monk
     from types import SimpleNamespace
     monkeypatch.setattr(status,"match_enchant_card",lambda *_:(score,"art"))
     monkeypatch.setattr(status,"_card_from_asset",lambda _:SimpleNamespace(_id="card",name="effect"))
+    monkeypatch.setattr(status,"_permanent_enchant_proof",lambda _:None)
     monkeypatch.setattr(status,"_value",lambda *_:(value,unit))
     monkeypatch.setattr(status,"ocr_boxes",lambda *args,**kw:[(f"{value}{unit}",.99,(0,0,80,30))] if unit else [])
     entry=status._trailing_enchant(np.zeros((1280,720,3),np.uint8),7)
@@ -279,7 +280,7 @@ def test_unknown_internal_font_glyph_cannot_be_dropped_to_make_short_number():
 @pytest.mark.parametrize("other_score,expected",[(.60,True),(.79,False)])
 def test_blue_fallback_compares_different_base_ids_not_character_art(monkeypatch,other_score,expected):
     from types import SimpleNamespace
-    monkeypatch.setattr(status,"_card_index",lambda:(["a-art1","a-art2","b-art"],np.array([[.85],[.84],[other_score]])))
+    monkeypatch.setattr(status,"_enchant_index",lambda:(["a-art1","a-art2","b-art"],np.array([[.85],[.84],[other_score]])))
     monkeypatch.setattr(status,"_slot",lambda *args:None)
     monkeypatch.setattr(status,"_inner",lambda _:None)
     monkeypatch.setattr(status,"_norm",lambda _:np.ones(1))
@@ -377,3 +378,73 @@ def test_local_r28_edge_background_does_not_hide_complete_166(monkeypatch):
         image=cv2.imread(str(base/f"{seq:05d}-exam_card_detail_state_changed.png"))
         assert status._font_digits_without_ring(image,0)==166
         assert status._value(image,0,"status")[0]==166
+
+
+def test_multiscale_reference_views_have_bounded_count_and_fixed_vector_size():
+    image=np.random.default_rng(4).integers(0,256,(256,240,3),dtype=np.uint8)
+    views=status._multiscale_card_templates(image)
+    assert len(views)==9
+    assert all(view.shape==(status.CARD_INNER**2,) and view.dtype==np.float32 for view in views)
+    assert all(np.isclose(np.linalg.norm(view),1) for view in views)
+    assert image.shape==(256,240,3)
+
+
+@pytest.mark.parametrize("enabled",[True,False])
+def test_multiscale_reference_selection_preserves_flag_off_legacy_index(monkeypatch,enabled):
+    legacy,windows=object(),object()
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1" if enabled else "0")
+    monkeypatch.setattr(status,"_card_index",lambda:legacy)
+    monkeypatch.setattr(status,"_windows_card_index",lambda:windows)
+    assert status._enchant_index() is (windows if enabled else legacy)
+
+
+def test_local_r29_multiscale_reference_verifies_same_card_without_lowering_threshold(monkeypatch):
+    path=Path(__file__).resolve().parents[1]/"reports/runs/20261107-080008/frames/00011-exam_card_detail_state_changed.png"
+    if not path.exists():
+        pytest.skip("local lossless evidence not present")
+    image=cv2.imread(str(path))
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","0")
+    old_score,old_asset=status.match_enchant_card(image,7)
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    score,asset=status.match_enchant_card(image,7)
+    assert old_score<.8 and score>=.8
+    assert status._card_from_asset(asset)._id==status._card_from_asset(old_asset)._id=="p_card-02-men-2_058"
+    verified=status._high_confidence_enchant(image,7)
+    assert verified["margin"]>=status.CAPTURED_MIN_MARGIN
+    recovered=status._trailing_enchant(image,7)
+    assert recovered["value"] is None
+    assert recovered["permanent_proof"]["actual_duration_status"]=="unknown"
+    assert recovered["permanent_proof"]["actual_customization_status"]=="unknown"
+
+
+@pytest.mark.parametrize("turn,count,allowed",[(-1,0,True),(3,0,False),(-1,2,False),(None,0,False),(-1,None,False)])
+def test_master_permanent_candidate_requires_explicit_unlimited_turn_and_count(turn,count,allowed):
+    from types import SimpleNamespace as NS
+    effect=NS(effect_type="ProduceExamEffectType_ExamStatusEnchant",effect_turn=turn,effect_count=count,
+              _produce_exam_status_enchant_id="enchant",_id="source")
+    variants=[NS(upgrade_count=i,play_effects=[NS(produce_exam_effect=effect)]) for i in range(4)]
+    assert bool(status._permanent_enchant_signature(variants)) is allowed
+
+
+def test_master_permanent_candidate_rejects_mixed_versions():
+    from types import SimpleNamespace as NS
+    def variant(grade,turn):
+        return NS(upgrade_count=grade,play_effects=[NS(produce_exam_effect=NS(
+            effect_type="ProduceExamEffectType_ExamStatusEnchant",effect_turn=turn,effect_count=0,
+            _produce_exam_status_enchant_id="enchant",_id=f"source{grade}"))])
+    assert status._permanent_enchant_signature([variant(0,-1),variant(1,3)]) is None
+
+
+@pytest.mark.parametrize("proof,value,accepted",[(None,None,False),({"master_duration_basis":"candidate_only"},None,True),
+                                                ({"master_duration_basis":"candidate_only"},4,False)])
+def test_missing_duration_does_not_prove_permanence_or_overwrite_positive_value(monkeypatch,proof,value,accepted):
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(status,"match_enchant_card",lambda *_:(.93,"art"))
+    monkeypatch.setattr(status,"_card_from_asset",lambda _:NS(_id="card",name="source"))
+    monkeypatch.setattr(status,"_permanent_enchant_proof",lambda _:proof)
+    monkeypatch.setattr(status,"_high_confidence_enchant",lambda *_:{"card_id":"card","value":value})
+    monkeypatch.setattr(status,"_value",lambda *_:(None,None))
+    monkeypatch.setattr(status,"ocr_boxes",lambda *args,**kw:[])
+    result=status._trailing_enchant(np.zeros((1280,720,3),np.uint8),7)
+    assert bool(result) is accepted

@@ -134,9 +134,48 @@ def _card_index() -> tuple[list[str], np.ndarray]:
     return keys, np.stack(rows)
 
 
+def _multiscale_card_templates(im):
+    """Finite, uniform reference views; every view retains the same dimensions."""
+    h,w = im.shape[:2]
+    side = min(h,w)
+    rows = []
+    for fraction in (3/8,7/16,1/2):
+        crop_side = max(1,round(side*fraction))
+        for offset in (-1/64,0,1/64):
+            x = (w-crop_side)//2 + round(side*offset)
+            y = (h-crop_side)//2
+            crop = im[y:y+crop_side,x:x+crop_side]
+            if crop.shape[:2] != (crop_side,crop_side):
+                continue
+            gray = cv2.resize(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),(CARD_INNER,CARD_INNER),interpolation=cv2.INTER_AREA)
+            rows.append(_norm(gray))
+    return rows
+
+
+@lru_cache(maxsize=1)
+def _windows_card_index() -> tuple[list[str], np.ndarray]:
+    folder = assets.card_art_dir()
+    if folder is None:
+        return [],np.zeros((0,1),np.float32)
+    keys,rows = [],[]
+    for png in sorted(folder.glob("*.png")):
+        im = cv2.imread(str(png))
+        if im is None:
+            continue
+        views = _multiscale_card_templates(im)
+        keys.extend([png.stem]*len(views))
+        rows.extend(views)
+    return (keys,np.stack(rows)) if rows else ([],np.zeros((0,1),np.float32))
+
+
+def _enchant_index():
+    return (_windows_card_index() if os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
+            else _card_index())
+
+
 def match_enchant_card(img: MatLike, k: int) -> tuple[float, str]:
     """非蓝槽 → (分数, 卡面资源名)。菱形大小与位置有几像素浮动，小范围搜索取最高。"""
-    keys, matrix = _card_index()
+    keys, matrix = _enchant_index()
     if not keys:
         return 0.0, ""
     vecs = np.stack([_norm(_inner(_slot(img, k, half, dy))) for half in (24, 26, 28) for dy in (-3, 0, 3)], axis=1)
@@ -147,7 +186,7 @@ def match_enchant_card(img: MatLike, k: int) -> tuple[float, str]:
 
 def _high_confidence_enchant(img: MatLike, k: int) -> dict | None:
     """Confirm art independently when blue scenery fooled the color branch."""
-    keys, matrix = _card_index()
+    keys, matrix = _enchant_index()
     if not keys:
         return None
     vecs = np.stack([_norm(_inner(_slot(img,k,half,dy)))
@@ -386,13 +425,74 @@ def _duration_candidates(boxes):
     return candidates
 
 
+def _permanent_enchant_signature(variants):
+    """Prove unlimited turn/count semantics across all supplied master grades.
+
+    KAA ProduceExamEffectType.ExamStatusEnchant documents -1 turns / 0 count
+    as permanent; positive turns or counts are explicitly limited effects.
+    """
+    if not variants:
+        return None
+    enchant_ids, effect_ids, grades = set(), set(), set()
+    for card in variants:
+        grade = card.upgrade_count
+        if type(grade) is not int or grade < 0:
+            return None
+        effects = [pe.produce_exam_effect for pe in card.play_effects
+                   if getattr(pe.produce_exam_effect.effect_type,"value",pe.produce_exam_effect.effect_type)
+                   == "ProduceExamEffectType_ExamStatusEnchant"]
+        if len(effects) != 1:
+            return None
+        effect = effects[0]
+        if (type(effect.effect_turn) is not int or effect.effect_turn != -1
+                or type(effect.effect_count) is not int or effect.effect_count != 0
+                or not effect._produce_exam_status_enchant_id):
+            return None
+        enchant_ids.add(effect._produce_exam_status_enchant_id)
+        effect_ids.add(effect._id)
+        grades.add(grade)
+    if len(enchant_ids) != 1:
+        return None
+    return {"enchant_id":next(iter(enchant_ids)), "master_variants":sorted(grades),
+            "source_effect_ids":sorted(effect_ids), "effect_turn":-1, "effect_count":0}
+
+
+def _permanent_enchant_proof(card_id):
+    try:
+        signature = _permanent_enchant_signature([c for c in SkillCard.all() if c._id == card_id])
+        if signature is None:
+            return None
+        from hiro.state.catalog import catalog
+        db = catalog().db
+        enchant = db.execute("SELECT produceExamTriggerId FROM ProduceExamStatusEnchant WHERE id=?",
+                             (signature["enchant_id"],)).fetchone()
+        if enchant is None or not enchant["produceExamTriggerId"]:
+            return None
+        trigger_id = enchant["produceExamTriggerId"]
+        if db.execute("SELECT id FROM ProduceExamTrigger WHERE id=?",(trigger_id,)).fetchone() is None:
+            return None
+        return {**signature,"trigger_id":trigger_id,"source":"public_master_all_card_variants",
+                "matched_source_card_id":card_id,"actual_source_version":"unknown",
+                "actual_customization_status":"unknown","actual_duration_status":"unknown",
+                "master_duration_basis":"candidate_only"}
+    except Exception:
+        return None  # Missing master fields never establish permanence.
+
+
 def _trailing_enchant(img: MatLike, k: int) -> dict | None:
-    """Confirm one adjoining low-outline slot by card art AND duration text."""
+    """Confirm an adjoining slot with art and duration or permanent-master evidence."""
     score, asset = match_enchant_card(img, k)
     if score < max(0.8, ENCHANT_MIN_SCORE):
         return None
     card = _card_from_asset(asset)
     if card is None:
+        return None
+    proof = _permanent_enchant_proof(card._id)
+    if proof is not None:
+        verified = _high_confidence_enchant(img,k)
+        if verified is not None and verified["card_id"] == card._id and verified.get("value") is None:
+            return {**verified,"value":None,"unit":None,
+                    "occupancy_basis":"card_art_and_master_permanent_candidate","permanent_proof":proof}
         return None
     value, _ = _value(img, k, "enchant", card._id)
     cy = _slot_y(k)

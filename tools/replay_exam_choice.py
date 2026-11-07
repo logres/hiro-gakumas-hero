@@ -102,10 +102,16 @@ def _state(payload: dict) -> tuple[BattleState, ExamMemory, IdolProfile | None, 
     if raw["trend"] is not None:
         raw["trend"] = tuple(raw["trend"])
     state = BattleState(**raw)
-    _require_keys(payload["exam_memory"], ExamMemory, "ExamMemory")
-    for installed in payload["exam_memory"]["installed"]:
+    memory_data = copy.deepcopy(payload["exam_memory"])
+    if isinstance(memory_data, dict):
+        # These runtime-only audit additions were absent from older snapshots.
+        # Normalize only the private copy: the recorded payload/hash stays exact.
+        memory_data.setdefault("successful_card_detail_candidates", [])
+        memory_data.setdefault("successful_detail_commit_ordinal", 0)
+    _require_keys(memory_data, ExamMemory, "ExamMemory")
+    for installed in memory_data["installed"]:
         _require_keys(installed, Installed, "ExamMemory.installed")
-    memory = ExamMemory.from_dict(copy.deepcopy(payload["exam_memory"]))
+    memory = ExamMemory.from_dict(memory_data)
     profile_data = payload["profile"]
     if profile_data is not None:
         _require_keys(profile_data, IdolProfile, "IdolProfile")

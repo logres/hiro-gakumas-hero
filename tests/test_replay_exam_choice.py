@@ -140,3 +140,40 @@ def test_model_call_limit_is_enforced_in_full_decision_chain(tmp_path, monkeypat
     assert len(calls) == result["model_calls_used"] == 1
     assert result["model_decision"]["source"] == "fallback"
     assert any("limit reached" in (row.get("error") or "") for row in result["model_decision"]["llm"])
+
+
+def test_legacy_runtime_detail_fields_replay_without_mutating_frozen_input(tmp_path):
+    path = _trace(tmp_path)
+    step = json.loads(path.read_text(encoding="utf-8"))
+    frozen = step["exam_decision_input"]
+    for key in ("successful_card_detail_candidates", "successful_detail_commit_ordinal"):
+        del frozen["input"]["exam_memory"][key]
+    frozen["sha256"] = hashlib.sha256(replay._canonical(frozen["input"])).hexdigest()
+    original_payload = replay._canonical(frozen["input"])
+    original_hash = frozen["sha256"]
+    original_text = json.dumps(step, ensure_ascii=False) + "\n"
+    path.write_text(original_text, encoding="utf-8")
+    _, _, loaded = replay._load(path, 7)
+    _, memory, *_ = replay._state(loaded["input"])
+    assert memory.successful_card_detail_candidates == []
+    assert memory.successful_detail_commit_ordinal == 0
+    assert replay._canonical(loaded["input"]) == original_payload
+    assert loaded["sha256"] == original_hash
+    result = replay.compare(path, 7)
+    assert result["input_sha256"] == original_hash
+    assert path.read_text(encoding="utf-8") == original_text
+    assert hashlib.sha256(original_payload).hexdigest() == original_hash
+
+
+@pytest.mark.parametrize("change", ["missing_required", "unknown_field"])
+def test_legacy_memory_compatibility_does_not_relax_other_fields(tmp_path, change):
+    path = _trace(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))["exam_decision_input"]["input"]
+    for key in ("successful_card_detail_candidates", "successful_detail_commit_ordinal"):
+        del payload["exam_memory"][key]
+    if change == "missing_required":
+        del payload["exam_memory"]["actions_left"]
+    else:
+        payload["exam_memory"]["invented_field"] = 1
+    with pytest.raises(ValueError, match="ExamMemory 字段不完整或未知"):
+        replay._state(payload)

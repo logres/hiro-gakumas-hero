@@ -1,0 +1,13 @@
+{
+  "scope": "Public closed synthetic premises; no claim of real-game reachability or model quality",
+  "cycle_cases": [
+    {"id":"complete-three", "draw":[], "grave":["target","x","y"], "excluded":[], "complete":true, "draw_count":3, "target_next":"guaranteed"},
+    {"id":"excluded-target", "draw":[], "grave":["x","y","z"], "excluded":["target"], "complete":true, "draw_count":3, "target_next":"absent"},
+    {"id":"unknown-order-four", "draw":[], "grave":["target","x","y","z"], "excluded":[], "complete":true, "draw_count":3, "target_next":"uncertain"},
+    {"id":"incomplete-grave", "draw":[], "grave":["x","y"], "excluded":[], "complete":false, "draw_count":3, "target_next":"uncertain"}
+  ],
+  "choice_cases": [
+    {"id":"wait-for-confirmed-growth", "remaining_turns":2, "current_score":10, "future_score":30, "expected":"skip"},
+    {"id":"final-turn-use", "remaining_turns":1, "current_score":10, "future_score":0, "expected":"play:0"}
+  ]
+}

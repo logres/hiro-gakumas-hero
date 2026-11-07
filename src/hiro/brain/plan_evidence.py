@@ -4,7 +4,7 @@ import json
 import os
 
 KEY = "_effect_basis"
-PREFIXES = ("已验证主数据与本帧装备识别：", "本帧卡牌详情原始证据：", "本帧考试分组快照：", "本帧持续卡效果候选：", "本帧持续饮料效果候选：")
+PREFIXES = ("已验证主数据与本帧装备识别：", "本帧卡牌详情原始证据：", "本帧考试分组快照：", "本帧持续卡效果候选：", "本帧持续饮料效果候选：", "考试持有牌组记账候选：")
 
 
 def enabled():
@@ -34,6 +34,7 @@ def effect_basis(state):
     remaining = {_version(c.card_id, c.upgrade) for c in state.hand}
     cards, equipment, groups, active = {}, [], {}, None
     active_drinks=None
+    owned_deck=None
     for line in (state.public_info or "").splitlines():
         prefix = next((p for p in PREFIXES if line.startswith(p)), None)
         if prefix is None:
@@ -44,7 +45,14 @@ def effect_basis(state):
             continue
         if not isinstance(data, dict):
             continue
-        if prefix == PREFIXES[4]:
+        if prefix == PREFIXES[5]:
+            deck=data.get("deck")
+            if data.get("scope")=="produce_owned_ledger/not_current_exam_piles" and isinstance(deck,dict):
+                owned_deck={k:deck.get(k) for k in ("recorded_size","observed_count","source","field_status","pending_review",
+                    "versions_known","recorded_inventory_complete","absence_claim_allowed","customization_effects_known")}
+                cards_read=deck.get("observed_cards")
+                owned_deck["observed_cards"]=sorted(cards_read,key=lambda card:json.dumps(card,sort_keys=True)) if isinstance(cards_read,list) else None
+        elif prefix == PREFIXES[4]:
             if data.get("observation_status")=="available":
                 active_drinks=[{k:drink.get(k) for k in ("observed_asset","identity_status","actual_source_version",
                     "actual_modifications_status","observed_value","observed_unit","master_lookup_status","candidate_variants")}
@@ -99,6 +107,7 @@ def effect_basis(state):
                 if value:
                     equipment.append(value)
     return {"version": 1, "cards": cards, "exam_groups": groups,"active_card_effects":active,"active_drink_effects":active_drinks,
+            "owned_deck":owned_deck,
             "equipment": sorted(equipment, key=lambda v: json.dumps(v, sort_keys=True))}
 
 
@@ -106,7 +115,7 @@ def changed(plan, state):
     current = effect_basis(state)
     old = plan[0].get(KEY) if plan and isinstance(plan[0], dict) else None
     if not isinstance(old, dict) or old.get("version") != 1:
-        return bool(current["cards"] or current["equipment"] or current["exam_groups"] or current["active_card_effects"] or current["active_drink_effects"])
+        return bool(current["cards"] or current["equipment"] or current["exam_groups"] or current["active_card_effects"] or current["active_drink_effects"] or current["owned_deck"])
     previous_cards = old.get("cards") or {}
     return (any(previous_cards.get(key) != value for key, value in current["cards"].items())
             or bool(current["equipment"] and current["equipment"] != old.get("equipment"))
@@ -116,7 +125,8 @@ def changed(plan, state):
                     and current["active_card_effects"]!=old.get("active_card_effects"))
             or bool(current["active_drink_effects"] is not None
                     and (current["active_drink_effects"] or old.get("active_drink_effects"))
-                    and current["active_drink_effects"]!=old.get("active_drink_effects")))
+                    and current["active_drink_effects"]!=old.get("active_drink_effects"))
+            or bool(current["owned_deck"] is not None and current["owned_deck"]!=old.get("owned_deck")))
 
 
 def stamp(plan, state):

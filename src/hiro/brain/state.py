@@ -72,6 +72,9 @@ class ExamMemory:
     attr_permil: dict = field(default_factory=dict)  # 本场考试见过的各属性回合倍率（千分比）：{Vo: 34990, …}
     turn_genki: dict = field(default_factory=dict)  # 每回合第一次看到的元气：{剩余回合（字符串）: 元气}，用来估元气增速
 
+    successful_card_detail_candidates: list[dict] = field(default_factory=list)
+    successful_detail_commit_ordinal: int = 0  # Local successful plays, not trace seq.
+
     def genki_gain_per_turn(self, remaining: int | None) -> float | None:
         """最近两回合（回合开始时）元气的平均增量；读数不够时 None。清零后的下降不算增长（按 0）。"""
         if remaining is None or str(remaining) not in self.turn_genki:
@@ -98,6 +101,9 @@ class ExamMemory:
     @classmethod
     def from_dict(cls, d: dict) -> "ExamMemory":
         d = dict(d)
+        # Historical detail candidates are scoped to this runtime memory only.
+        d.pop("successful_card_detail_candidates", None)
+        d.pop("successful_detail_commit_ordinal", None)
         d["installed"] = [Installed(**e) for e in d.get("installed") or []]
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})

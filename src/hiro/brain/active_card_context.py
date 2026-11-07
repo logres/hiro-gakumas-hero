@@ -4,6 +4,9 @@ An icon does not establish upgrade, customization, activation count, or actual
 installed effects. Original-card immediate gains are never recurring effects.
 """
 import os
+import copy
+import json
+import re
 import sqlite3
 
 from hiro.brain.cards import description_text
@@ -50,8 +53,8 @@ def _persistent(master,row):
     return out
 
 
-def observed_active_card_context(raw_statuses):
-    """No history, name lookup, or deck inference. Input must be current raw statuses."""
+def observed_active_card_context(raw_statuses, *, historical_candidates=None, exam=None):
+    """Identity comes only from current raw icons; history is separate partial evidence."""
     result={"observation_status":"available" if isinstance(raw_statuses,list) else "not_available",
             "cards":[],"ignored_non_enchant_count":0,
             "note":"只由本帧enchant图标的card_id确认来源卡；主数据版本是互斥候选，不可相加。"
@@ -77,6 +80,16 @@ def observed_active_card_context(raw_statuses):
                "customization_effects_known":False,"remaining_trigger_count_status":"unknown",
                "candidate_variants":[]}
         result["cards"].append(entry)
+        history = [copy.deepcopy(record) for record in historical_candidates or []
+                   if isinstance(record,dict) and record.get("exam")==exam
+                   and record.get("card_id")==cid and isinstance(cid,str) and cid
+                   and record.get("status")=="historical_partial/not_verified"
+                   and record.get("scope")=="memory_lifetime_only"]
+        if history:
+            entry["historical_detail_candidates"] = history
+            entry["historical_detail_note"] = (
+                "此前成功使用的同ID卡详情原始局部证据，仅为历史候选；不是当前图标具体版本或定制已确认。"
+                "不可再次计入打出时即时收益，不覆盖当前事实，也不证明叠层或剩余次数。")
         if not isinstance(cid,str) or not cid or master is None:
             continue
         try:
@@ -100,3 +113,47 @@ def observed_active_card_context(raw_statuses):
                 pass
             entry["candidate_variants"].append(candidate)
     return result
+
+
+def remember_successful_detail(state, memory, card):
+    """Called only by successful commit, never infer an action from history text."""
+    if not enabled() or memory.exam != state.exam or not card.card_id:
+        return
+    memory.successful_detail_commit_ordinal += 1
+    identity=(card.slot,card.card_id,card.upgrade)
+    if sum((c.card_id,c.upgrade)==identity[1:] for c in state.hand)!=1:
+        return
+    for line in (state.public_info or "").splitlines():
+        prefix="本帧卡牌详情原始证据："
+        if not line.startswith(prefix):
+            continue
+        try:
+            context=json.loads(line[len(prefix):])
+        except (ValueError,TypeError):
+            continue
+        if not isinstance(context,dict):
+            continue
+        for detail in context.get("cards") or []:
+            if not isinstance(detail,dict) or tuple(detail.get(k) for k in ("slot","card_id","upgrade"))!=identity:
+                continue
+            lines=detail.get("raw_ocr_lines")
+            hashes=[detail.get(k) for k in ("snapshot_sha256","detail_sha256")]
+            if (type(card.upgrade) is not int or card.upgrade<0
+                    or any(not isinstance(h,str) or re.fullmatch(r"[0-9a-f]{64}",h) is None for h in hashes)
+                    or not isinstance(lines,list) or not 1<=len(lines)<=128
+                    or any(not isinstance(x,str) or len(x)>2000 for x in lines)
+                    or not any(x.strip() for x in lines)):
+                continue
+            record={"status":"historical_partial/not_verified", "scope":"memory_lifetime_only", "exam":memory.exam,"turn":state.turn,
+                    "card_id":card.card_id,"upgrade":card.upgrade,
+                    "successful_commit_ordinal":memory.successful_detail_commit_ordinal,
+                    "ordinal_basis":"local_successful_play_commit/not_trace_seq", "source_trace_seq":None,
+                    "snapshot_sha256":hashes[0],"detail_sha256":hashes[1],
+                    "raw_ocr_lines":list(lines),"ocr_completeness":"partial",
+                    "actual_effects_status":"unknown"}
+            vision=detail.get("vision_transcription")
+            if isinstance(vision,dict) and vision.get("status")=="model_transcription_unverified":
+                record["vision_transcription"]=copy.deepcopy(vision)
+            memory.successful_card_detail_candidates.append(record)
+            memory.successful_card_detail_candidates=memory.successful_card_detail_candidates[-64:]
+            return

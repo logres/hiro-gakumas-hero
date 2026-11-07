@@ -71,8 +71,16 @@ def effect_basis(state):
         elif prefix == PREFIXES[3]:
             if data.get("observation_status")=="available":
                 active=[{k:card.get(k) for k in ("observed_card_id","identity_status","actual_upgrade_status",
-                    "customization_effects_known","observed_value","observed_unit","candidate_variants")}
+                    "customization_effects_known","observed_value","observed_unit","candidate_variants","historical_detail_candidates")}
                     for card in data.get("cards") or [] if isinstance(card,dict)]
+                for card in active:
+                    history=card.get("historical_detail_candidates")
+                    if isinstance(history,list):
+                        card["historical_detail_candidates"]=[{k:record.get(k) for k in
+                            ("card_id","upgrade","status","raw_ocr_lines","ocr_completeness")}
+                            | ({"vision_transcription":{k:record["vision_transcription"].get(k) for k in
+                                ("status","lines","uncertain_spans")}} if isinstance(record.get("vision_transcription"),dict) else {})
+                            for record in history if isinstance(record,dict)]
                 active.sort(key=lambda card:json.dumps(card,sort_keys=True))
         elif prefix == PREFIXES[1]:
             for card in data.get("cards") or []:

@@ -185,7 +185,7 @@ def match_enchant_card(img: MatLike, k: int) -> tuple[float, str]:
 
 
 def _high_confidence_enchant(img: MatLike, k: int) -> dict | None:
-    """Confirm art independently when blue scenery fooled the color branch."""
+    """Confirm art by score and separation from every different base card."""
     keys, matrix = _enchant_index()
     if not keys:
         return None
@@ -213,7 +213,7 @@ def _high_confidence_enchant(img: MatLike, k: int) -> dict | None:
     value, unit = _value(img,k,"enchant",card._id)
     return {"slot":k,"kind":"enchant","card_id":card._id,"name":card.name,
             "asset":asset,"score":round(float(score),3),"margin":round(margin,3),
-            "value":value,"unit":unit,"identity_basis":"card_art_after_unrecognized_blue_glyph"}
+            "value":value,"unit":unit,"identity_basis":"high_confidence_card_art"}
 
 
 def _card_from_asset(key: str) -> SkillCard | None:
@@ -396,7 +396,7 @@ def _value(img: MatLike, k: int, kind: str, card_id: str | None = None) -> tuple
             _ENCHANT_UNIT[card_id] = unit
         return value, _ENCHANT_UNIT[card_id]
     # 慢路径：与原实现相同
-    value = (_verified_status_number(img, k) if kind == "status" and os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" else
+    value = (_verified_status_number(img, k) if kind in ("status","enchant") and os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1" else
              read_dddd(img, (SLOT_X + 12, cy + 2, SLOT_X + 60, cy + 32)))
     if value is None:
         return None, None
@@ -638,8 +638,13 @@ def _read_slot(img: MatLike, k: int) -> dict:
             if alternatives:
                 entry["alternatives"] = alternatives
     else:
+        windows_art = os.environ.get("HIRO_WINDOWS_HUD_NATIVE_SCALE") == "1"
+        if windows_art:
+            confirmed = _high_confidence_enchant(img,k)
+            if confirmed is not None:
+                return confirmed
         score, asset = match_enchant_card(img, k)
-        card = _card_from_asset(asset) if score >= ENCHANT_MIN_SCORE else None
+        card = _card_from_asset(asset) if not windows_art and score >= ENCHANT_MIN_SCORE else None
         grey = None if card is not None else match_status_icon(patch)
         if grey and _accepted(meta, grey):
             # 培育计划的核心状态（やる気 等）为 0 时以灰底常驻、不显示数值；卡面认不出而字形能认出即是这种槽

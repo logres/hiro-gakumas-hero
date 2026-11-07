@@ -158,7 +158,8 @@ class ScreenExamStateSource:
                 state.strategy_references = select_references(identity, state.exam)
         from hiro.brain import active_card_context
         if active_card_context.enabled():
-            active=active_card_context.observed_active_card_context(raw.get("statuses") if isinstance(raw,dict) else None)
+            active=active_card_context.observed_active_card_context(raw.get("statuses") if isinstance(raw,dict) else None,
+                historical_candidates=getattr(memory,"successful_card_detail_candidates",None) if getattr(memory,"exam",None)==state.exam else None, exam=state.exam)
             state.public_info="\n".join(p for p in (state.public_info,
                 active_card_context.PREFIX+json.dumps(active,ensure_ascii=False)) if p)
         from hiro.brain import active_drink_context

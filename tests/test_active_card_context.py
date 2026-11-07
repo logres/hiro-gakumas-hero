@@ -131,3 +131,89 @@ def test_legacy_flags_preserve_all_prior_defaults_and_original_input(monkeypatch
         assert all(os.environ[key]=="0" for key in additions)
     assert saved==before and all(os.environ[key]=="1" for key in additions)
     assert "src/hiro/brain/active_card_context.py" in replay.VERSION_FILES
+
+
+def test_successful_commit_detail_survives_only_with_current_icon(master, monkeypatch):
+    from hiro.brain.battle import BattleBrain
+    from hiro.brain.rules import Decision
+    from hiro.brain.state import BattleState
+    from hiro.brain.cards import CardView
+    monkeypatch.setenv(active.FLAG,"1")
+    card=CardView(0,"generic","generic-card",1,True,"mental",0,0,None,"catalog")
+    detail={"slot":0,"card_id":"generic-card","upgrade":1,"snapshot_sha256":"a"*64,
+            "detail_sha256":"b"*64,"raw_ocr_lines":["actual extra effect +1"],"ocr_completeness":"partial"}
+    state=BattleState(exam="qualify-3",turn=4,remaining_turns=10,hp=30,max_hp=30,genki=0,hand=[card],
+        public_info="本帧卡牌详情原始证据："+json.dumps({"cards":[detail]}))
+    memory=ExamMemory("qualify-3")
+    assert not memory.successful_card_detail_candidates  # A decision without successful commit records nothing.
+    BattleBrain(None).commit(state,memory,Decision("play:0","success","llm"))
+    assert len(memory.successful_card_detail_candidates)==1
+    record=memory.successful_card_detail_candidates[0]
+    assert record["scope"]=="memory_lifetime_only" and record["source_trace_seq"] is None
+    assert record["snapshot_sha256"]=="a"*64 and record["upgrade"]==1
+    context=active.observed_active_card_context([raw()],historical_candidates=memory.successful_card_detail_candidates,exam=memory.exam)
+    entry=context["cards"][0]
+    assert entry["historical_detail_candidates"][0]["raw_ocr_lines"]==["actual extra effect +1"]
+    assert entry["actual_upgrade_status"]=="unknown" and entry["customization_effects_known"] is False
+    assert not active.observed_active_card_context([],historical_candidates=memory.successful_card_detail_candidates,exam=memory.exam)["cards"]
+    mismatch=active.observed_active_card_context([raw()],historical_candidates=memory.successful_card_detail_candidates,exam="other")
+    assert "historical_detail_candidates" not in mismatch["cards"][0]
+    restored=ExamMemory.from_dict(json.loads(json.dumps(memory.to_dict())))
+    assert not restored.successful_card_detail_candidates and restored.successful_detail_commit_ordinal==0
+
+
+def test_historical_detail_source_and_plan_semantics(master,monkeypatch):
+    monkeypatch.setenv(active.FLAG,"1")
+    monkeypatch.setenv("HIRO_EXPLICIT_IDOL_STATE","0")
+    monkeypatch.setattr(exam_state,"screen_fields",lambda *a,**kw:{"statuses":[]})
+    record={"exam":"qualify-3","card_id":"generic-card","upgrade":1,
+            "scope":"memory_lifetime_only","status":"historical_partial/not_verified",
+            "raw_ocr_lines":["extra+1"],"snapshot_sha256":"a"*64,"detail_sha256":"b"*64}
+    memory=ExamMemory("qualify-3",successful_card_detail_candidates=[record])
+    source=exam_state.ScreenExamStateSource();source.begin({"exam":"qualify-3"})
+    frame=NS(raw={"statuses":[raw()]},img=None,cards=[],drinks=[],remaining=3,hp=30,genki=20)
+    state,_=source.read(frame,memory)
+    assert "extra+1" in state.to_prompt_dict()["public_info"]
+    old=plan_evidence.stamp([{"action":"play","card":"next"}],state)
+    record.update(snapshot_sha256="c"*64,detail_sha256="d"*64,successful_commit_ordinal=99)
+    state,_=source.read(frame,memory)
+    assert not plan_evidence.changed(old,state)
+    record["raw_ocr_lines"]=["extra+2"]
+    state,_=source.read(frame,memory)
+    assert plan_evidence.changed(old,state)
+
+
+def test_historical_detail_missing_or_wrong_identity_does_not_record(master,monkeypatch):
+    from hiro.brain.cards import CardView
+    monkeypatch.setenv(active.FLAG,"1")
+    card=CardView(0,"generic","generic-card",1,True,"mental",0,0,None,"catalog")
+    memory=ExamMemory("qualify-3")
+    state=NS(exam="other",turn=1,hand=[card],public_info="")
+    active.remember_successful_detail(state,memory,card)
+    assert not memory.successful_card_detail_candidates
+    state.exam=memory.exam
+    state.public_info="本帧卡牌详情原始证据："+json.dumps({"cards":[{"slot":0,"card_id":"wrong","upgrade":1,
+        "snapshot_sha256":"a"*64,"detail_sha256":"b"*64,"raw_ocr_lines":["extra"]}]})
+    active.remember_successful_detail(state,memory,card)
+    assert not memory.successful_card_detail_candidates
+
+
+def test_memory_positional_turn_compatibility_and_legacy_restore():
+    assert ExamMemory("qualify-3",7).turn==7
+    restored=ExamMemory.from_dict({"exam":"qualify-3","turn":7})
+    assert restored.turn==7 and restored.successful_card_detail_candidates==[]
+
+
+@pytest.mark.parametrize("memory",[None,NS(exam="qualify-3")])
+def test_source_optional_history_works_with_lightweight_memory(master,monkeypatch,memory):
+    from hiro.brain.state import BattleState
+    monkeypatch.setenv(active.FLAG,"1")
+    monkeypatch.setenv("HIRO_EXPLICIT_IDOL_STATE","0")
+    monkeypatch.setenv("HIRO_EXAM_DECK_CONTEXT","0")
+    monkeypatch.setattr(exam_state,"screen_fields",lambda *a,**kw:{})
+    monkeypatch.setattr(exam_state,"screen_state",lambda *a,**kw:BattleState(
+        exam="qualify-3",turn=1,remaining_turns=3,hp=30,max_hp=30,genki=0,hand=[]))
+    source=exam_state.ScreenExamStateSource();source.begin({"exam":"qualify-3"})
+    state,_=source.read(NS(raw={"statuses":[raw()]},img=None),memory)
+    assert active.PREFIX in state.public_info
+    assert "historical_detail_candidates" not in state.public_info

@@ -515,3 +515,61 @@ def test_local_r30_static_holdout_reads_current_values_and_both_card_sources(mon
         assert values["examlessonvaluemultiple"]==20
         assert any(row.get("card_id")=="p_card-02-men-2_058" for row in rows)
         assert any(row.get("card_id")=="p_card-02-men-3_040" and row["value"]==3 for row in rows)
+
+
+@pytest.mark.parametrize("scores,accepted",[( [.6339,.6311],False),([.7344,.7269],False),
+                                          ([.9198,.4352],True)])
+def test_ordinary_windows_enchant_rejects_close_wrong_winners(monkeypatch,scores,accepted):
+    from types import SimpleNamespace as NS
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    monkeypatch.setattr(status,"_enchant_index",lambda:(["a","b"],np.array(scores).reshape(2,1)))
+    monkeypatch.setattr(status,"_slot",lambda *a:np.zeros((56,56,3),np.uint8))
+    monkeypatch.setattr(status,"_inner",lambda _:None)
+    monkeypatch.setattr(status,"_norm",lambda _:np.ones(1))
+    monkeypatch.setattr(status,"_card_from_asset",lambda asset:NS(_id=asset,name="candidate"))
+    monkeypatch.setattr(status,"_icon_index",lambda:({},{}))
+    monkeypatch.setattr(status,"match_status_icon",lambda *_:[(.1,"unknown"),(.05,"other")])
+    monkeypatch.setattr(status,"_value",lambda *_:(None,None))
+    row=status._read_slot(np.zeros((1280,720,3),np.uint8),6)
+    assert (row.get("card_id")=="a") is accepted
+    if not accepted:assert row["card_id"] is None and row["name"] is None
+
+
+def test_enchant_unknown_font_cannot_publish_single_engine_background_one(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    monkeypatch.setattr(status,"read_leading_int",lambda *_:(None,None))
+    monkeypatch.setattr(status,"_font_digits_without_ring",lambda *_:None)
+    monkeypatch.setattr(status,"read_dddd",lambda *_:1)
+    monkeypatch.setattr(status,"ocr",lambda *a,**kw:[])
+    assert status._value(np.zeros((1280,720,3),np.uint8),7,"enchant","any-source")== (None,None)
+
+
+def test_enchant_verified_font_positive_is_not_erased_by_master_permanence(monkeypatch):
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    monkeypatch.setattr(status,"read_leading_int",lambda *_:(1,None))
+    monkeypatch.setattr(status,"_verified_status_number",lambda *_:pytest.fail("already verified font"))
+    assert status._value(np.zeros((1280,720,3),np.uint8),7,"enchant","any-source")== (1,None)
+
+
+def test_enchant_flag_off_keeps_original_numeric_fallback(monkeypatch):
+    monkeypatch.delenv("HIRO_WINDOWS_HUD_NATIVE_SCALE",raising=False)
+    monkeypatch.setattr(status,"read_leading_int",lambda *_:(None,None))
+    monkeypatch.setattr(status,"read_dddd",lambda *_:1)
+    monkeypatch.setattr(status,"_unit_label",lambda *_:None)
+    monkeypatch.setattr(status,"_verified_status_number",lambda *_:pytest.fail("flag off"))
+    assert status._value(np.zeros((1280,720,3),np.uint8),7,"enchant","any-source")== (1,None)
+
+
+def test_local_r32_ambiguous_sources_rejected_reliable_dream_and_hikaru_retained(monkeypatch):
+    base=Path(__file__).resolve().parents[1]/"reports/runs/20261107-090456/frames"
+    if not (base/"00025-exam_card_detail_state_changed.png").exists():
+        pytest.skip("private lossless evidence absent")
+    monkeypatch.setenv("HIRO_OCR_BACKEND","hiro.platforms.windows.ocr")
+    monkeypatch.setenv("HIRO_WINDOWS_HUD_NATIVE_SCALE","1")
+    for seq,kind in [(25,"state_changed"),(26,"baseline"),(28,"state_changed"),(29,"baseline")]:
+        image=cv2.imread(str(base/f"{seq:05d}-exam_card_detail_{kind}.png"))
+        row=status._read_slot(image,6)
+        if seq in (25,26):assert row.get("card_id") is None and row.get("name") is None
+        else:assert row["card_id"]=="p_card-02-men-3_040" and row["value"]==1
+        hikaru=status._read_slot(image,7)
+        assert hikaru["card_id"]=="p_card-02-act-3_050" and hikaru["value"] is None

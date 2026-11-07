@@ -69,6 +69,8 @@ class BattleBrain:
         hand = [c.name for c in state.hand]
         if d.kind == "play":
             card = next(c for c in state.hand if c.slot == d.slot)
+            from hiro.brain.active_card_context import remember_successful_detail
+            remember_successful_detail(state, memory, card)
             memory.record_play(card, hp_before=state.hp, profile=self.profile)
             hand.remove(card.name)
             # 抽牌会改变手牌，之后无法预期；往牌堆生成眠气不影响手牌

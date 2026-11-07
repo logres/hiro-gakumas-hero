@@ -2,7 +2,7 @@
 import re
 import cv2
 from cv2.typing import MatLike
-from hiro.platforms import get_backend
+from hiro.platforms import get_backend, PlatformUnavailableError
 
 
 def ocr(img: MatLike, *, scale: float = 3.0, languages=("ja-JP", "en-US")) -> list[tuple[str, float]]:
@@ -12,6 +12,15 @@ def ocr(img: MatLike, *, scale: float = 3.0, languages=("ja-JP", "en-US")) -> li
 def ocr_boxes(img: MatLike, *, scale: float = 3.0, languages=("ja-JP", "en-US")) -> list[tuple[str, float, tuple[int, int, int, int]]]:
     """Return boxes in the ORIGINAL image's top-left pixel coordinates."""
     return get_backend("ocr").ocr_boxes(img, scale=scale, languages=languages)
+
+
+def recognize_line(img: MatLike, *, languages=("ja-JP", "en-US")) -> list[tuple[str, float]]:
+    """Optional recognition-only capability; returns text/confidence, no boxes."""
+    provider = get_backend("ocr")
+    recognizer = getattr(provider,"recognize_line",None)
+    if recognizer is None:
+        raise PlatformUnavailableError('OCR backend does not support recognition-only lines')
+    return recognizer(img,languages=languages)
 
 
 def digits_image(img: MatLike, *, white_min: int = 200) -> MatLike:

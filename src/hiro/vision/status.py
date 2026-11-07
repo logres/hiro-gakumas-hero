@@ -24,7 +24,7 @@ from hiro.vision import assets
 from hiro.vision.region_cache import RegionCache, cached
 from hiro.vision import layout
 from hiro.vision.digits import read_dddd, read_leading_int, GROUP_GAP
-from hiro.vision.ocr import ocr, ocr_boxes
+from hiro.vision.ocr import ocr, ocr_boxes, recognize_line
 
 ICON_PREFIX = "img_general_icon_exam-effect_"
 _FIRST_SLOT = "BuffListRoot/BuffList/ExamMainBuffView"
@@ -341,6 +341,16 @@ def _verified_status_number(img: MatLike, k: int) -> int | None:
     glyph = _font_digits_without_ring(img,k)
     if padded is not None and glyph == padded:
         return padded  # Independent complete glyphs and a separate OCR engine.
+    if glyph is not None and os.environ.get("HIRO_WINDOWS_LINE_OCR") == "1":
+        try:
+            lines = recognize_line(img[cy-2:cy+34,SLOT_X+14:SLOT_X+130])
+            if len(lines) == 1:
+                text,confidence = lines[0]
+                match = re.fullmatch(r"([0-9]+)[%％]?",text.strip())
+                if np.isfinite(confidence) and confidence >= 0.9 and match is not None and int(match[1]) == glyph:
+                    return glyph
+        except Exception:
+            pass  # Optional capability failure retains the established detector path.
     for crop in (img[y1:y2, x1:x2], img[cy - 2:cy + 34, SLOT_X + 14:SLOT_X + 130]):
         lines = ocr(crop, scale=1.0)
         if len(lines) != 1:

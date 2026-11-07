@@ -35,6 +35,28 @@ def ocr(img, *, scale: float = 3.0, languages=('ja-JP', 'en-US')) -> list[tuple[
     return [(text, confidence) for text, confidence, _ in ocr_boxes(img, scale=scale, languages=languages)]
 
 
+def recognize_line(img, *, languages=('ja-JP', 'en-US')) -> list[tuple[str, float]]:
+    """Recognize one already-cropped BGR line, without detection or boxes.
+
+    Confidence is returned unfiltered. Callers must verify single-line geometry,
+    grammar and confidence; this does not provide spatial detection evidence.
+    """
+    if (getattr(img,'ndim',None) != 3 or img.shape[2] != 3
+            or not img.shape[0] or not img.shape[1]):
+        raise ValueError('recognize_line requires a nonempty BGR image')
+    language = _language(languages)
+    results, _ = _engine(language)(img,use_det=False,use_cls=False,use_rec=True)
+    output = []
+    for row in results or []:
+        if not isinstance(row,(tuple,list)) or len(row) != 2 or not isinstance(row[0],str):
+            raise ValueError('recognize_line received malformed recognition-only output')
+        confidence = float(row[1])
+        if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+            raise ValueError('recognize_line received invalid confidence')
+        output.append((row[0],confidence))
+    return output
+
+
 def _reading_order(items):
     """Horizontal UI text: rows top-to-bottom, fragments left-to-right.
 

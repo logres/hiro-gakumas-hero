@@ -1298,13 +1298,22 @@ def run_exam(
                     continue
                 todo = Decision(f"{d.kind}:{slot}", d.reason, d.source, d.plan, d.line, d.warnings)
             with _phase("tap_check"):
-                stale = _stale_before_tap(frame) if stale_streak < STALE_MAX else None
+                revalidate = os.environ.get("HIRO_PLAN_EFFECT_REVALIDATION") == "1"
+                stale = _stale_before_tap(frame) if revalidate or stale_streak < STALE_MAX else None
             if stale is not None:
                 stale_streak += 1
+                if revalidate:
+                    # The advisor may already have stored followups assuming
+                    # this action succeeds. Its prerequisite did not execute.
+                    memory.plan = []
                 rec.log("exam_stale_frame", exam=exam, action=d.action, reason=stale, remaining=frame.remaining)
                 logger.warning("[%s] 决策帧已过时（%s）：不点 %s，重新决策", exam, stale, d.action)
                 if session is not None:
                     session.recover("page_misjudged", f"决策帧与点击前画面不一致（{stale}），{d.action} 不执行，重新决策")
+                    # Keep the rejected decision reproducible without claiming
+                    # an execution or advancing the action/memory ledger.
+                    session.record(obs, decision=contract, previews=previews or [],
+                                   exam_decision_input=exam_decision_input)
                 animating = True
                 _move_to_redo((time.monotonic() - t_decide) * 1000)
                 continue

@@ -166,6 +166,11 @@ class ScreenExamStateSource:
             drinks=active_drink_context.observed_active_drink_context(raw.get("statuses") if isinstance(raw,dict) else None)
             state.public_info="\n".join(p for p in (state.public_info,
                 active_drink_context.PREFIX+json.dumps(drinks,ensure_ascii=False)) if p)
+        from hiro.brain import status_evidence_context
+        if status_evidence_context.enabled():
+            status_context=status_evidence_context.observed_status_context(raw.get("statuses") if isinstance(raw,dict) else None)
+            state.public_info="\n".join(p for p in (state.public_info,
+                status_evidence_context.PREFIX+json.dumps(status_context,ensure_ascii=False)) if p)
         from hiro.brain import exam_deck_context
         if exam_deck_context.enabled():
             deck_context=exam_deck_context.recorded_exam_deck_context(self.session.state if self.session is not None else None)

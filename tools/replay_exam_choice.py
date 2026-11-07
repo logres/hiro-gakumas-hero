@@ -33,6 +33,7 @@ VERSION_FILES = (
     "src/hiro/brain/fallback_effect_scoring.py",
     "src/hiro/brain/active_card_context.py", "src/hiro/defaults/exam_state.py",
     "src/hiro/brain/active_drink_context.py",
+    "src/hiro/brain/status_evidence_context.py",
     "src/hiro/brain/exam_deck_context.py", "src/hiro/brain/mechanism_card_selection.py",
     "src/hiro/brain/prompts/exam.md", "src/hiro/brain/prompts/exam_generic.md",
     "src/hiro/brain/strategy_references.py", "src/hiro/defaults/strategy_refs/review_engine_action.json",
@@ -123,7 +124,7 @@ def _flags(saved: dict):
     # Schema 1.0 inputs recorded before this opt-in existed used legacy plans.
     saved = {"HIRO_PLAN_EFFECT_REVALIDATION": False, "HIRO_FALLBACK_EFFECT_SCORING": False,
              "HIRO_ACTIVE_CARD_EFFECT_CONTEXT": False, "HIRO_ACTIVE_DRINK_EFFECT_CONTEXT": False,
-             "HIRO_EXAM_DECK_CONTEXT": False, **saved}
+             "HIRO_EXAM_DECK_CONTEXT": False, "HIRO_TYPED_STATUS_CONTEXT": False, **saved}
     if set(saved) != set(FLAGS) or any(type(v) is not bool for v in saved.values()):
         raise ValueError("策略 flags 缺失或无效")
     old = {name: os.environ.get(name) for name in (*FLAGS, "HIRO_LLM")}

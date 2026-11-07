@@ -182,3 +182,37 @@ def test_only_observed_exam_end_finishes_saved_memory(env, monkeypatch, tmp_path
         with pytest.raises(RuntimeError, match="interrupted"):
             ex.run_exam(Brain(), "qualify-3", Rec(), ended, source=Source([]), advisor=Advisor(), session=session)
     assert saved[-1]["finished"] is completed
+
+
+@pytest.mark.parametrize("rejections", [1, 4])
+def test_stale_decision_keeps_frozen_input_without_execution_or_memory_commit(env, monkeypatch, tmp_path, rejections):
+    monkeypatch.setenv("HIRO_PLAN_EFFECT_REVALIDATION", "1")
+    records, recoveries = [], []
+    frozen = {"schema_version": "1.0", "sha256": "frozen-test-input", "input": {"turn": 1}}
+    monkeypatch.setattr(ex, "load_exam_memory", lambda *a: None)
+    monkeypatch.setattr(ex, "save_exam_memory", lambda *a, **kw: None)
+    monkeypatch.setattr(ex, "freeze_exam_decision_input", lambda *a, **kw: frozen)
+    monkeypatch.setattr(ex, "_stale_before_tap", lambda frame: "fresh hand unreadable")
+    monkeypatch.setattr(ex, "_move_to_redo", lambda *a: None)
+    monkeypatch.setattr(ex, "_execute", lambda *a: pytest.fail("stale action must not execute"))
+    session = NS(state=NS(exam_session=NS(label=None), produce={}), trace=NS(dir=tmp_path),
+                 last="decision-observation", note=lambda *a: None,
+                 recover=lambda *a: recoveries.append(a),
+                 record=lambda obs, **kw: records.append((obs, kw)))
+    source, advisor, brain = Source([]), Advisor(), Brain()
+    original_decide = advisor.decide
+    def proposing_plan(state, memory, previews, legal):
+        # BattleBrain stores followups before the executor validates the frame.
+        memory.plan = [{"action": "play", "card": "requires-rejected-action"}]
+        return original_decide(state, memory, previews, legal)
+    advisor.decide = proposing_plan
+    done = iter([False] * rejections + [True])
+    memory = ex.run_exam(brain, "qualify-3", Rec(), lambda: next(done),
+                         source=source, advisor=advisor, session=session)
+    assert len(records) == rejections and len(recoveries) == rejections
+    obs, payload = records[0]
+    assert obs == "decision-observation" and payload["exam_decision_input"] is frozen
+    assert payload["decision"].action == Action.play_card(0)
+    assert payload.get("execution") is None and brain.commits == []
+    assert memory.plan == []  # Followups cannot survive their unexecuted prerequisite.
+    assert not any(isinstance(c, tuple) and c[0] == "executed" for c in source.calls)

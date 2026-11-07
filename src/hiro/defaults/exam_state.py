@@ -161,6 +161,11 @@ class ScreenExamStateSource:
             active=active_card_context.observed_active_card_context(raw.get("statuses") if isinstance(raw,dict) else None)
             state.public_info="\n".join(p for p in (state.public_info,
                 active_card_context.PREFIX+json.dumps(active,ensure_ascii=False)) if p)
+        from hiro.brain import active_drink_context
+        if active_drink_context.enabled():
+            drinks=active_drink_context.observed_active_drink_context(raw.get("statuses") if isinstance(raw,dict) else None)
+            state.public_info="\n".join(p for p in (state.public_info,
+                active_drink_context.PREFIX+json.dumps(drinks,ensure_ascii=False)) if p)
         return state, "screen"
 
     def confidence(self) -> str:

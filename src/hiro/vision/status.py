@@ -553,6 +553,39 @@ def _accepted(meta: dict, top: list[tuple[float, str]]) -> bool:
     return True
 
 
+@lru_cache(maxsize=1)
+def _drink_status_libraries():
+    from hiro.vision.items import IconLibrary
+    folder = assets.icon_dir("drink")
+    return [] if folder is None else [IconLibrary.load(folder,size) for size in (24,28,32,36,40,44)]
+
+
+def _drink_enchant_candidate(img: MatLike, k: int) -> dict | None:
+    """Open-set visual asset candidate, never a drink/effect/version assertion."""
+    scores = {}
+    for library in _drink_status_libraries():
+        size = library.size
+        for dx in (-3,0,3):
+            for dy in (-3,0,3):
+                x,y = SLOT_X+dx-size//2,_slot_y(k)+dy-size//2
+                if x<0 or y<0 or x+size>img.shape[1] or y+size>img.shape[0]:
+                    continue
+                for score,asset in library.match(img[y:y+size,x:x+size]):
+                    if asset and np.isfinite(score):
+                        scores[asset] = max(float(score),scores.get(asset,-1.0))
+    ranked = sorted(scores.items(),key=lambda item:item[1],reverse=True)
+    if len(ranked) < 2:
+        return None  # One available template cannot establish separation.
+    asset,score = ranked[0]
+    margin = score-ranked[1][1]
+    if score < 0.8 or margin < 0.15:
+        return None
+    return {"slot":k,"kind":"drink_enchant","observed_asset":asset,
+            "score":round(score,3),"margin":round(margin,3),"value":None,"unit":None,
+            "identity_basis":"masked_drink_asset_candidate","identity_status":"visual_asset_candidate",
+            "actual_source_version":"unknown"}
+
+
 def _read_slot(img: MatLike, k: int) -> dict:
     meta, _ = _icon_index()
     patch = _slot(img, k)
@@ -586,6 +619,17 @@ def _read_slot(img: MatLike, k: int) -> dict:
                     "score": round(gscore, 3), "margin": round(gscore - grey[1][0], 3), "inactive": True, "value": 0, "unit": None}  # fmt: skip
         entry = {"slot": k, "kind": "enchant", "card_id": card._id if card else None,
                  "name": card.name if card else None, "asset": asset, "score": round(score, 3)}  # fmt: skip
+    if (os.environ.get("HIRO_WINDOWS_DRINK_ENCHANT_ICONS") == "1"
+            and ((entry["kind"] == "status" and entry.get("key") is None)
+                 or (entry["kind"] == "enchant" and entry.get("card_id") is None))
+            and diamond_score(img,k) >= DIAMOND_MIN):
+        # A color-branch failure does not establish that card art was absent.
+        # Do not let a drink candidate override an independently plausible card.
+        card_score = (entry["score"] if entry["kind"] == "enchant" else match_enchant_card(img,k)[0])
+        if card_score < ENCHANT_MIN_SCORE:
+            drink = _drink_enchant_candidate(img,k)
+            if drink is not None:
+                return drink
     entry["value"], entry["unit"] = _value(img, k, entry["kind"], entry.get("card_id"))
     return entry
 

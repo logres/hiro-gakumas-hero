@@ -86,7 +86,11 @@ def build_context(state, idol, eligible_rows, catalog):
             deck.append({"card_id": cid, "upgrade": upgrade, "master_effect_text": None,
                          "observed_customized": card.get("customized"), "unknown": True})
         else:
-            deck.append(_view(cid, upgrade, row, card))
+            view = _view(cid, upgrade, row, card)
+            from hiro.brain.customization_context import enabled as customization_context_enabled, transformation_context
+            if customization_context_enabled():
+                view["customization_transformations"] = transformation_context(card, catalog)
+            deck.append(view)
     source = state.sources.get("produce.deck")
     origin = getattr(source, "origin", None)
     verified = (state.field_status.get("produce.deck") == "verified"

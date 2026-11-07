@@ -272,8 +272,14 @@ def run(session, decider, identity, *, device, read=None, wait=time.sleep,
         read_result = result_reader(read, h.ocr)
         result = h.commit(reference.fields, args, shoot=shoot, click=click, wait=wait,
                           read_confirm=h.confirm, read_result=read_result, dismiss_result=dismiss)
+        from hiro.brain.customization_context import enabled as customization_context_enabled
+        from uuid import uuid4
+        evidence = ({"transaction_id": str(uuid4()), "status": getattr(result, "status", None),
+                     "final_click_sent": getattr(result, "final_click_sent", False), "source": "strict_menu_settlement"}
+                    if customization_context_enabled() and result.ok and getattr(result, "status", None) == "confirmed"
+                    and getattr(result, "final_click_sent", False) else None)
         session.record(obs, decision=decision, execution=ExecutionResult(
-            decision.action, result.ok, taps=prepared.taps + result.taps,
+            decision.action, result.ok, customization_evidence=evidence, taps=prepared.taps + result.taps,
             page_before="SPECIAL_GUIDANCE", page_after="SPECIAL_GUIDANCE", error=result.error))
         if not result.ok:
             raise ValueError("guidance purchase uncertain; do not retry: " + str(result.error))

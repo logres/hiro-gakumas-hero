@@ -78,7 +78,9 @@ def test_decline_returns_grid_and_excludes_reviewed_card():
     assert taps == [(200, 1080)] and left == [True]
 
 
-def test_success_recompares_actual_next_level_without_grid_navigation():
+@pytest.mark.parametrize("context_on,settlement", [(False, "confirmed"), (True, "confirmed"), (True, "uncertain")])
+def test_success_recompares_actual_next_level_without_grid_navigation(monkeypatch, context_on, settlement):
+    monkeypatch.setenv("HIRO_CUSTOMIZATION_TRANSFORM_CONTEXT", "1" if context_on else "0")
     fields, _, taps, device, read, hooks, session = setup()
     choices = []
     purchase = Decision(Action(ActionKind.CUSTOMIZE_CARD, {
@@ -93,7 +95,7 @@ def test_success_recompares_actual_next_level_without_grid_navigation():
     def commit(*args, **kwargs):
         fields["produce_point"] = 80
         fields["menu"]["total_left"] = 1
-        return SimpleNamespace(ok=True, taps=[[500, 1160]], error=None)
+        return SimpleNamespace(ok=True, taps=[[500, 1160]], error=None, status=settlement, final_click_sent=True)
     hooks.commit = commit
     hooks.scan = lambda **kw: pytest.fail("must preserve purchased menu")
     with pytest.raises(ValueError, match="decision waits"):
@@ -102,6 +104,14 @@ def test_success_recompares_actual_next_level_without_grid_navigation():
     assert choices[1][0]["produce_point"] == 80
     assert choices[1][0]["selected_card"]["customized"] is True
     assert any(r.get("execution") and r["execution"].ok for r in session.records)
+    execution = next(r["execution"] for r in session.records if r.get("execution") and r["execution"].ok)
+    from hiro.loop.events import events_from_step, apply_event
+    from hiro.contracts import GameState
+    ev = events_from_step("SPECIAL_GUIDANCE", purchase.action.to_dict(), execution.ok, {}, None,
+                          seq=1, customization_evidence=execution.customization_evidence)[0]
+    owned = apply_event(GameState(produce={"deck": [{"card_id": "card", "upgrade": 1}]}),
+                        ev, predictor=lambda *_: [])[0].produce["deck"][0]
+    assert bool(owned.get("customization_history")) == (context_on and settlement == "confirmed")
     assert not taps
 
 

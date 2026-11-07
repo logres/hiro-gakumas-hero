@@ -44,6 +44,17 @@ def hand_customization_context(hand, produce: dict) -> dict:
                       "effect_basis": "catalog_base_definition",
                       "actual_effects_status": "unknown", "customization_effects_known": False,
                       "evidence_source": "produce.deck"})
+    from hiro.brain.customization_context import enabled as customization_context_enabled, transformation_context
+    if customization_context_enabled():
+        from hiro.state.catalog import catalog
+        for evidence in cards:
+            matches = [c for c in (produce.get("deck") or []) if isinstance(c, dict) and c.get("card_id") == evidence["card_id"]
+                       and c.get("upgrade") == evidence["upgrade"]]
+            if len(matches) == 1:
+                try:
+                    evidence["customization_transformations"] = transformation_context(matches[0], catalog())
+                except (OSError, RuntimeError):
+                    pass
     return {"cards": cards,
             "note": "所列手牌对应已定制的持有版本；同版本多副本可能无法定位具体手牌。"
                     "这些手牌的 text、cost、hp_cost、extra_cost、tags 仍来自未定制主数据，"

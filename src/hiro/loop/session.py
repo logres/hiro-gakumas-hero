@@ -227,7 +227,7 @@ class Session:
             from hiro.loop.events import events_from_step
 
             for ev in events_from_step(obs.page.name, decision.action.to_dict(), bool(execution.ok), state_in.page_fields,
-                                       state_in.produce, seq=obs.seq):  # fmt: skip
+                                       state_in.produce, seq=obs.seq, customization_evidence=getattr(execution, "customization_evidence", None)):  # fmt: skip
                 self.emit(ev)
         timings_ms = dict(timings_ms or {})
         if decision is not None and obs.page.name != "HIF_EXAM":

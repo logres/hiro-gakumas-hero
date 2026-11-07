@@ -104,6 +104,12 @@
   },
   "version": {
    "type": "string"
+  },
+  "customization_evidence": {
+   "type": [
+    "object",
+    "null"
+   ]
   }
  },
  "required": [
@@ -117,7 +123,8 @@
   "retries",
   "error",
   "seconds",
-  "version"
+  "version",
+  "customization_evidence"
  ],
  "additionalProperties": false,
  "description": "一次动作执行的结果。"

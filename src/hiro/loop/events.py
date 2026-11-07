@@ -110,6 +110,7 @@ def _apply_deck(s: GameState, e: Event) -> None:
                    and type(target) is int and target > 0 and type(c.get("upgrade")) is int
                    and c["upgrade"] == target - 1]
         if len(matches) == 1:
+            matches[0].pop("customization_history", None)  # Old version binding is no longer established.
             matches[0]["upgrade"] = target
             s.sources["produce.deck"] = Source("event", e.seq)
         else:
@@ -120,6 +121,17 @@ def _apply_deck(s: GameState, e: Event) -> None:
         matches = [c for c in deck if a.get("card_id") and c.get("card_id") == a["card_id"]
                    and (a.get("upgrade") is None or c.get("upgrade") == a["upgrade"])]
         if len(matches) == 1:
+            from hiro.brain.customization_context import enabled as customization_context_enabled
+            proof = a.get("execution_evidence") or {}
+            if (customization_context_enabled() and proof.get("source") == "strict_menu_settlement"
+                    and proof.get("status") == "confirmed" and proof.get("final_click_sent") is True
+                    and isinstance(proof.get("transaction_id"), str) and proof["transaction_id"]
+                    and a.get("customize_id") and type(a.get("upgrade")) is int):
+                history = matches[0].setdefault("customization_history", [])
+                if not any(h.get("transaction_id") == proof["transaction_id"] for h in history):
+                    history.append({"customize_id": a["customize_id"], "transaction_id": proof["transaction_id"],
+                                    "source": proof["source"], "count_status": "unknown",
+                                    "event_seq": e.seq})
             matches[0]["customized"] = True
             matches[0]["customization_effects_known"] = False
         # An identity and upgrade do not describe the newly customized effect.
@@ -129,6 +141,9 @@ def _apply_deck(s: GameState, e: Event) -> None:
         prod["deck"] = [{"card_id": c.get("card_id"), "upgrade": c.get("upgrade"),
                          **({"customized": c["customized"]} if "customized" in c else {})}
                         for c in a["deck"]]
+        from hiro.brain.customization_context import enabled as customization_context_enabled, inherit_review
+        if customization_context_enabled():
+            inherit_review(deck, prod["deck"])
         s.pending_review = [f for f in s.pending_review if f != "produce.deck"]
         complete = (e.confirmed is True and a.get("deck_size", len(prod["deck"])) == len(prod["deck"])
                     and all(c.get("card_id") and type(c.get("upgrade")) is int and c["upgrade"] >= 0
@@ -142,6 +157,8 @@ def _apply_deck(s: GameState, e: Event) -> None:
         else:
             pending_deck()
     elif e.kind in ("CARD_AUTO_PROCESS", "UNMODELED_CHANGE") and "deck" in str(a.get("field", "deck")):
+        for card in deck:
+            card.pop("customization_history", None)
         if "produce.deck" not in s.pending_review:
             s.pending_review.append("produce.deck")
         s.field_status["produce.deck"] = "pending"
@@ -234,7 +251,7 @@ def confirmed_deck_size(steps, final_deck: list | None) -> int | None:
     return sum(final.values()) if owned is not None and not pending and final is not None and +owned == final else None
 
 
-def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict, produce: dict | None, *, seq: int) -> list[Event]:
+def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict, produce: dict | None, *, seq: int, customization_evidence: dict | None = None) -> list[Event]:
     """已执行成功的决策 → action 事件（hiro.loop.ledger 的规则，改为产出事件）。"""
     if not ok or not action:
         return []
@@ -285,6 +302,7 @@ def events_from_step(page: str | None, action: dict, ok: bool, page_fields: dict
           and type(args.get("upgrade")) is int and args["upgrade"] >= 0
           and type(args.get("levels")) is int and args["levels"] == 1):
         E("CARD_CUSTOMIZE", card_id=args["card_id"], upgrade=args["upgrade"],
+          execution_evidence=customization_evidence,
           customize_id=args.get("customize_id"), item_index=args.get("item_index"),
           price=args.get("price"), source="observed_menu_execution")
     elif page == "PDRINK_MAX" and kind == "DiscardDrink" and args.get("receive") and args.get("discard"):

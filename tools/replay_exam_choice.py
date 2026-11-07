@@ -130,7 +130,7 @@ def _flags(saved: dict):
     # Schema 1.0 inputs recorded before this opt-in existed used legacy plans.
     saved = {"HIRO_PLAN_EFFECT_REVALIDATION": False, "HIRO_FALLBACK_EFFECT_SCORING": False,
              "HIRO_ACTIVE_CARD_EFFECT_CONTEXT": False, "HIRO_ACTIVE_DRINK_EFFECT_CONTEXT": False,
-             "HIRO_EXAM_DECK_CONTEXT": False, "HIRO_TYPED_STATUS_CONTEXT": False, **saved}
+             "HIRO_EXAM_DECK_CONTEXT": False, "HIRO_TYPED_STATUS_CONTEXT": False, "HIRO_CUSTOMIZATION_TRANSFORM_CONTEXT": False, **saved}
     if set(saved) != set(FLAGS) or any(type(v) is not bool for v in saved.values()):
         raise ValueError("策略 flags 缺失或无效")
     old = {name: os.environ.get(name) for name in (*FLAGS, "HIRO_LLM")}

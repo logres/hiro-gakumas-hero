@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+from hiro.brain.customization_context import semantic_context
 
 KEY = "_effect_basis"
 PREFIXES = ("已验证主数据与本帧装备识别：", "本帧卡牌详情原始证据：", "本帧考试分组快照：", "本帧持续卡效果候选：", "本帧持续饮料效果候选：", "考试持有牌组记账候选：", "本帧状态读数证据：")
@@ -61,7 +62,7 @@ def effect_basis(state):
                 owned_deck={k:deck.get(k) for k in ("recorded_size","observed_count","source","field_status","pending_review",
                     "versions_known","recorded_inventory_complete","absence_claim_allowed","customization_effects_known")}
                 cards_read=deck.get("observed_cards")
-                owned_deck["observed_cards"]=sorted(cards_read,key=lambda card:json.dumps(card,sort_keys=True)) if isinstance(cards_read,list) else None
+                owned_deck["observed_cards"]=sorted(semantic_context(cards_read),key=lambda card:json.dumps(card,sort_keys=True)) if isinstance(cards_read,list) else None
         elif prefix == PREFIXES[4]:
             if data.get("observation_status")=="available":
                 active_drinks=[{k:drink.get(k) for k in ("observed_asset","identity_status","actual_source_version",
@@ -112,6 +113,13 @@ def effect_basis(state):
                                             key=lambda c: json.dumps(c, sort_keys=True))
                 groups[group["pile"]] = value
         else:
+            for hand_card in (data.get("hand_customization") or {}).get("cards", []):
+                if not isinstance(hand_card, dict):
+                    continue
+                key = _version(hand_card.get("card_id"), hand_card.get("upgrade"))
+                transformation = hand_card.get("customization_transformations")
+                if key is not None and key in remaining and transformation:
+                    cards["customization:" + key] = semantic_context(transformation)
             for item in data.get("observed_pitems") or []:
                 if not isinstance(item, dict):
                     continue

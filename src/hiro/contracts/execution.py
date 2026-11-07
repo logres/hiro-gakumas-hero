@@ -21,3 +21,4 @@ class ExecutionResult(Contract):
     error: str | None = None  # 未生效 / 异常的说明
     seconds: float = 0.0  # 从下发到判定完成的总耗时
     version: str = VERSION
+    customization_evidence: dict | None = None  # Strict executor settlement evidence; no inferred effects.

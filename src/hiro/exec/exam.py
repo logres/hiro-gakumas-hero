@@ -444,22 +444,31 @@ SETTLE_CALM_S = float(os.environ.get("HIRO_SETTLE_CALM_S") or 0)
 STALE_MAX = 3
 
 
-def _stale_before_tap(frame) -> str | None:
+def _stale_before_tap(frame, *, on_rejected=None) -> str | None:
     """点击前重新截图，与决策帧比剩余回合和手牌位置（_lite_sig，约 25ms）。不一致返回原因，一致或判断不了返回 None。"""
     try:
         a = _lite_sig(frame.img)
         if a is None:
             return None  # 决策帧本身读不出（截图兜底等）：不拦
-        b = _lite_sig(device.screenshot())
+        fresh = device.screenshot()
+        b = _lite_sig(fresh)
     except Exception:
         return None
     if b is None:
-        return "点击前读不到剩余回合 / 手牌（动画或结算中）"
-    if a[0][0] != b[0][0]:
-        return f"剩余回合 {a[0][0]}→{b[0][0]}"
-    if a[1] != b[1]:
-        return f"手牌位置变了（{len(a[1])}→{len(b[1])} 张）"
-    return None
+        reason = "点击前读不到剩余回合 / 手牌（动画或结算中）"
+    elif a[0][0] != b[0][0]:
+        reason = f"剩余回合 {a[0][0]}→{b[0][0]}"
+    elif a[1] != b[1]:
+        reason = f"手牌位置变了（{len(a[1])}→{len(b[1])} 张）"
+    else:
+        return None
+    if on_rejected is not None:
+        try:
+            on_rejected(fresh, {"reason": reason, "decision_signature": a,
+                                "fresh_signature": b, "image_role": "rejected_fresh_frame"})
+        except Exception:
+            logger.exception("点击前拒绝诊断记录失败")
+    return reason
 
 
 def _guard_repeated_decision(session, memory, d, exam) -> None:
@@ -1299,7 +1308,12 @@ def run_exam(
                 todo = Decision(f"{d.kind}:{slot}", d.reason, d.source, d.plan, d.line, d.warnings)
             with _phase("tap_check"):
                 revalidate = os.environ.get("HIRO_PLAN_EFFECT_REVALIDATION") == "1"
-                stale = _stale_before_tap(frame) if revalidate or stale_streak < STALE_MAX else None
+                def record_stale_rejection(image, data):
+                    from hiro.exec.card_detail_review import image_sha256
+                    rec.log("exam_stale_before_tap_rejected", image=image, lossless=True,
+                            pixel_sha256=image_sha256(image), exam=exam, action=d.action, **data)
+
+                stale = _stale_before_tap(frame, on_rejected=record_stale_rejection) if revalidate or stale_streak < STALE_MAX else None
             if stale is not None:
                 stale_streak += 1
                 if revalidate:

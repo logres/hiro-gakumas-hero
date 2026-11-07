@@ -114,7 +114,7 @@ def env(monkeypatch):
     monkeypatch.setattr(ex, "_handle_dialogs", lambda img, slow=False: False)
     monkeypatch.setattr(ex, "_settle_fast", lambda img, **kw: frame)
     monkeypatch.setattr(ex, "_stable_frame", lambda **kw: frame)
-    monkeypatch.setattr(ex, "_stale_before_tap", lambda f: None)
+    monkeypatch.setattr(ex, "_stale_before_tap", lambda f, **kw: None)
     monkeypatch.setattr(ex, "_execute", lambda d, f: [[100, 1010]])
     monkeypatch.setattr(ex, "_wait_change", lambda sig: True)
     monkeypatch.setattr(ex, "_play_missed", lambda f, c: False)
@@ -192,7 +192,7 @@ def test_stale_decision_keeps_frozen_input_without_execution_or_memory_commit(en
     monkeypatch.setattr(ex, "load_exam_memory", lambda *a: None)
     monkeypatch.setattr(ex, "save_exam_memory", lambda *a, **kw: None)
     monkeypatch.setattr(ex, "freeze_exam_decision_input", lambda *a, **kw: frozen)
-    monkeypatch.setattr(ex, "_stale_before_tap", lambda frame: "fresh hand unreadable")
+    monkeypatch.setattr(ex, "_stale_before_tap", lambda frame, **kw: "fresh hand unreadable")
     monkeypatch.setattr(ex, "_move_to_redo", lambda *a: None)
     monkeypatch.setattr(ex, "_execute", lambda *a: pytest.fail("stale action must not execute"))
     session = NS(state=NS(exam_session=NS(label=None), produce={}), trace=NS(dir=tmp_path),
@@ -216,3 +216,52 @@ def test_stale_decision_keeps_frozen_input_without_execution_or_memory_commit(en
     assert payload.get("execution") is None and brain.commits == []
     assert memory.plan == []  # Followups cannot survive their unexecuted prerequisite.
     assert not any(isinstance(c, tuple) and c[0] == "executed" for c in source.calls)
+
+
+@pytest.mark.parametrize("fresh_sig, expected", [
+    (None, "点击前读不到"),
+    (((6, 29, 30), ((1, 2),)), "剩余回合"),
+    (((7, 29, 30), ((3, 4),)), "手牌位置"),
+    (((7, None, 30), ((1, 2),)), None),
+])
+def test_stale_diagnostic_reuses_single_fresh_frame(monkeypatch, fresh_sig, expected):
+    old, fresh = object(), object()
+    original = ((7, 29, 30), ((1, 2),))
+    screenshots, signatures, records = [], [], []
+    def shoot():
+        screenshots.append(fresh)
+        return fresh
+    def signature(image):
+        signatures.append(image)
+        return original if image is old else fresh_sig
+    monkeypatch.setattr(ex, "device", NS(screenshot=shoot))
+    monkeypatch.setattr(ex, "_lite_sig", signature)
+    result = ex._stale_before_tap(NS(img=old), on_rejected=lambda image, data: records.append((image, data)))
+    assert screenshots == [fresh]
+    assert signatures == [old, fresh]
+    if expected is None:
+        assert result is None and records == []
+    else:
+        assert result.startswith(expected)
+        assert records == [(fresh, {"reason": result, "decision_signature": original,
+                                   "fresh_signature": fresh_sig, "image_role": "rejected_fresh_frame"})]
+
+
+def test_stale_diagnostic_failure_preserves_rejection(monkeypatch):
+    old, fresh = object(), object()
+    monkeypatch.setattr(ex, "device", NS(screenshot=lambda: fresh))
+    monkeypatch.setattr(ex, "_lite_sig", lambda image: ((7, 29, 30), ((1, 2),)) if image is old else None)
+    def fail(image, data):
+        raise RuntimeError("recorder unavailable")
+    assert ex._stale_before_tap(NS(img=old), on_rejected=fail).startswith("点击前读不到")
+
+
+@pytest.mark.parametrize("baseline, raises", [(None, False), (None, True)])
+def test_stale_diagnostic_keeps_unreadable_baseline_behavior(monkeypatch, baseline, raises):
+    def signature(image):
+        if raises:
+            raise RuntimeError("unreadable")
+        return baseline
+    monkeypatch.setattr(ex, "_lite_sig", signature)
+    monkeypatch.setattr(ex, "device", NS(screenshot=lambda: pytest.fail("unexpected screenshot")))
+    assert ex._stale_before_tap(NS(img=object()), on_rejected=lambda *args: pytest.fail("unexpected record")) is None
